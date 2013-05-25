@@ -9,7 +9,8 @@ data ProductionKind = NoProduction
                     | Production GoodKind
                     | Windfall GoodKind
 
-data GoodKind = NoveltyGoods
+data GoodKind = AnyGood
+              | NoveltyGoods
               | RareElements
               | Genes
               | AlienTechnology
@@ -76,7 +77,18 @@ data ConsumePowerQualifier = CPNoQualifier
                            | CPNoTradePowers
                            | CPNoTimesTwo
 
-data ProducePower = Foo -- TODO
+data ProducePower =
+     -- Base
+     PDraw Int                   -- Draw n cards
+   | PDrawForKind GoodKind       -- Draw 1 card for each of the specified kind of good produced
+   | PDrawFor CardQualifier      -- Draw 1 card for each of the specified cards in the tableau
+   | PDrawForMost GoodKind Int   -- Draw n cards if the player produced more of the specified good than any other player
+   | PDrawOnProducedWindfall Int -- Draw n cards for producing on this world
+   | PDrawForDifferentKinds      -- Draw 1 card for each different kind of good produced
+   | PProduceGood                -- Produce a good (if this world has no good)
+   | PProduceGoodAndDraw Int     -- Produce a good and then draw n cards (draw 0 if no good was produced)
+   | PProduceWindfall GoodKind   -- Produce on a windfall of specified good
+
 
 data CardQualifier = NoQualifier
                    | Not CardQualifier
