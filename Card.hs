@@ -36,7 +36,8 @@ data StartWorldColor = Red | Blue
 data Action =
      ANoAction
    | AConsume               [CardQualifier] -- Consume the specified cards
-   | AConsumeThreeDifferent                 -- Consume three different kinds of goods
+   | AConsumeDifferent      Int             -- Consume n different kinds of goods
+   | AConsumeDifferentUpTo  Int             -- Consume up to n different kinds of goods
    | ADevelop               CardQualifier   -- Develop a card of the specified kind
    | ADevelopByPayment                      -- Develop a card by paying at least 1 for it after discounts
    | ADiscardFromHandUpTo   Int             -- Discard up to n cards from hand (can be 1)
@@ -47,7 +48,8 @@ data Action =
    | ATrade                 CardQualifier   -- Trade the specified card
 
 data Reward =
-     RDraw                  Int               -- Draw n cards
+     RAnteAndDrawIfLucky                      -- From RvI
+   | RDraw                  Int               -- Draw n cards
    | RDrawForKindsProduced                    -- Draw 1 card for each different kind of good produced
    | RDrawForKindProduced   GoodKind          -- Draw 1 card for each of the specified kind of good produced
    | PDrawForMostProduced   GoodKind      Int -- Draw n cards if the player produced more of the specified good than any other player
@@ -63,7 +65,9 @@ data Reward =
    | RProduce               CardQualifier     -- Produce a good on the specified world, if empty
    | RReduceCost            CardQualifier Int -- Reduce the specified card's cost by n
    | RReduceCostToZero      CardQualifier     -- Reduce the specified card's cost to 0
+   | RReducePayForMilitary  Int               -- Reduce pay-for-military cost by n (does not give pay-for-military power)
    | RSettleSecondWorld                       -- Settle a second world (without powers from first, do not draw a Settle bonus if the player chose Settle)
+   | RTakeoverDefense       CardQualifier Int -- Gain n takeover defense for each of the specified cards in the tableau
    | RTakeOverImperium                        -- Take over an Imperium military world
    | RTakeOverRebel                           -- Take over a Rebel military world
    | RTemporaryMilitary     Int               -- Gain n military this phase
@@ -72,19 +76,18 @@ data Reward =
    | RTradeNoTimesTwo                         -- FIXME: can this be simplified?
    | RVictoryPoints         Int               -- Gain n VPs
 
-data Power = Action Reward Int -- Perform a for r up to n times
+data Power = Power Action Reward Int -- Perform action for reward up to n times
 
 data CardQualifier =
-     NoQualifier
-   | Not   CardQualifier
-   | AllOf [CardQualifier]
-   | AnyOf [CardQualifier]
-   | ThisCard
-   | SettleQualifier      SettleKind
-   | ProductionQualifier  ProductionKind
-   | GoodQualifier        GoodKind
-   | DevelopmentQualifier DevelopmentKind
-   | NameQualifier        NameKind
+     CQNoQualifier
+   | CQNot                  CardQualifier
+   | CQAnd                  CardQualifier CardQualifier
+   | CQThisCard
+   | CQSettleQualifier      SettleKind
+   | CQProductionQualifier  ProductionKind
+   | CQGoodQualifier        GoodKind
+   | CQDevelopmentQualifier DevelopmentKind
+   | CQNameQualifier        NameKind
 
 data Card =
    Card { name            :: String
