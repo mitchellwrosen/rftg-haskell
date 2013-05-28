@@ -1,0 +1,42 @@
+[
+   {
+      "name": "Old Earth",
+      "kind": "world"
+      "settle_kind": "non_military"
+      "production_kind": {
+         "production": "any"
+      },
+      "name_kinds": [],
+      "cost": 3,
+      "vp": {
+         "constant": 2
+      },
+      "explore_powers" : [],
+      "develop_powers": [],
+      "settle_powers": [],
+      "trade_powers": [
+         {
+            "reward": {
+               "draw": 1
+            },
+            "times": 1
+         }
+      ],
+      "consume_powers": [
+         {
+            "action": {
+               "consume": [
+                  {
+                     "good_qualifier": "any"
+                  }
+               ]
+            },
+            "reward": {
+               "victory_points": 1
+            },
+            "times": 2
+         }
+      ],
+      "produce_powers": []
+   }
+]
