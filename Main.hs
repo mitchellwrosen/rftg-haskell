@@ -2,18 +2,20 @@ module Main where
 
 import Debug.Trace
 
+import Text.Printf
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.Gdk.GC
 import Graphics.UI.Gtk.Gdk.Drawable
 import Graphics.UI.Gtk.Gdk.Events
 
-drawDiscardPoolText = "Draw: 100 Discard: 0 Pool: 24"
+drawDiscardPoolText :: Int -> Int -> Int -> String
+drawDiscardPoolText = printf "Draw: %d Discard: %d Pool: %d"
 
 cardImage :: IO Image
-cardImage = imageNewFromFile "images/card_back.jpg"
+cardImage = imageNewFromFile "images/cards/card_back.jpg"
 
 drawDiscardPoolLabel :: IO Label
-drawDiscardPoolLabel = labelNew (Just drawDiscardPoolText)
+drawDiscardPoolLabel = labelNew (Just $ drawDiscardPoolText 100 0 48)
 
 playHistoryTextView :: IO TextView
 playHistoryTextView = do
@@ -157,7 +159,7 @@ drawCurrentHand drawingArea _ = do
    (width, _) <- widgetGetSize drawingArea
    drawWindow      <- widgetGetDrawWindow drawingArea
    gc              <- gcNew drawWindow
-   pix             <- pixbufNewFromFileAtSize "./images/card_back.jpg" (width `quot` 6) (-1)
+   pix             <- pixbufNewFromFileAtSize "./images/cards/card_back.jpg" (width `quot` 6) (-1)
    drawPixbuf drawWindow gc pix 0 0 0 0 (-1) (-1) RgbDitherNone 0 0
    return True
 
@@ -166,7 +168,7 @@ drawCurrentTableau drawingArea _ = do
    drawWindow      <- widgetGetDrawWindow drawingArea
    (width, height) <- widgetGetSize drawingArea
    gc              <- gcNew drawWindow
-   pix             <- pixbufNewFromFileAtSize "./images/card_back.jpg" (width `quot` 6) (-1)
+   pix             <- pixbufNewFromFileAtSize "./images/cards/card_back.jpg" (width `quot` 6) (-1)
    drawPixbuf drawWindow gc pix 0 0 0 0 (-1) (-1) RgbDitherNone 0 0
    return True
 
