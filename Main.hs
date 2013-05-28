@@ -7,7 +7,7 @@ import Graphics.UI.Gtk.Gdk.GC
 import Graphics.UI.Gtk.Gdk.Drawable
 import Graphics.UI.Gtk.Gdk.Events
 
-drawDiscardPoolText = "Draw: 86 Discard: 0 Pool: 48"
+drawDiscardPoolText = "Draw: 100 Discard: 0 Pool: 24"
 
 cardImage :: IO Image
 cardImage = imageNewFromFile "images/card_back.jpg"
@@ -83,6 +83,13 @@ tableauBox color = do
    boxPackStart box tableau        PackGrow    0
    boxPackStart box playerStatus   PackNatural 0
    return box
+
+tableauDrawingArea :: Color -> IO DrawingArea
+tableauDrawingArea color = do
+   drawingArea <- drawingAreaNew
+   widgetModifyBg drawingArea StateNormal color
+   onExpose drawingArea (drawCurrentTableau drawingArea)
+   return drawingArea
 
 strikeThroughLabel :: Label -> IO Label
 strikeThroughLabel label = do
@@ -177,13 +184,6 @@ handDrawingArea = do
 
 colorBlue = Color 0x9000 0xa700 0xca00
 colorRed  = Color 0xe700 0x6d00 0x6400
-
-tableauDrawingArea :: Color -> IO DrawingArea
-tableauDrawingArea color = do
-   drawingArea <- drawingAreaNew
-   widgetModifyBg drawingArea StateNormal color
-   onExpose drawingArea (drawCurrentTableau drawingArea)
-   return drawingArea
 
 playerBox = do
    box     <- vBoxNew False 0
