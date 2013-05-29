@@ -3,12 +3,14 @@ module Rftg.GameState where
 import System.Random.Shuffle (shuffleM)
 
 import Rftg.Card
+import Rftg.Goal
 import Rftg.Phase
 import Rftg.Player
 
 data GameState =
    GameState { gPlayers            :: [Player]
              , gDeck               :: [Card]
+             , gDiscard            :: [Card]
              , gFirstGoals         :: [Goal]
              , gMostGoals          :: [Goal]
              , gVPPool             :: Int
@@ -34,6 +36,7 @@ initGameState settings num_players = do
    (first_goals, most_goals) <- getGoals settings
    return GameState { gPlayers        = undefined
                     , gDeck           = deck
+                    , gDiscard        = []
                     , gFirstGoals     = first_goals
                     , gMostGoals      = most_goals
                     , gVPPool         = num_players * 12
