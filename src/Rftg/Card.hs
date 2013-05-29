@@ -10,28 +10,20 @@ import Data.Aeson
    , eitherDecode', parseJSON, withBool, withNumber
    )
 import Data.Aeson.Types (Parser)
-import Data.Attoparsec.Number (Number(..))
-import Data.Text (append, Text, unpack)
+import Data.Text (append, unpack)
 
 import qualified Data.ByteString.Lazy.Char8 as BS
 import qualified Data.HashMap.Lazy as H
 import qualified Data.Vector as V
 
-badNumArgs :: Text -> Int -> Int -> String
-badNumArgs key actual expected =
-   unpack key ++ " received " ++ show actual ++ " args (expected " ++ show expected ++ ")"
-
 badFormat :: Show s => s -> String
 badFormat s = "bad format or unknown key: " ++ show s
-
-numberToInt :: Number -> Int
-numberToInt (I n) = fromIntegral n
 
 withBool' :: Value -> Parser Bool
 withBool' = withBool "" pure
 
 withNumber' :: Value -> Parser Int
-withNumber' = withNumber "" (pure . numberToInt)
+withNumber' = withNumber "" (pure . truncate)
 
 data CardKind = World
               | Development deriving (Show)
@@ -66,7 +58,7 @@ instance FromJSON GoodKind where
    parseJSON (String "alien_technology") = pure AlienTechnology
    parseJSON _                           = fail "good_kind expects 'any', 'novelty', 'rare_elements', 'genes', or 'alien_technology'"
 
--- { 
+-- {
 --    "production" | "windfall": GoodKind
 -- }
 data ProductionKind = Production GoodKind
@@ -113,19 +105,19 @@ data CostKind = AtMost Int
               | Exactly Int
               deriving (Show)
 
--- { 
+-- {
 --    "at_most" | "exactly": (int)
 -- }
 instance FromJSON CostKind where
    parseJSON (Object o) =
-      case H.toList o of 
+      case H.toList o of
          [(key, Number n)] ->
-            case key of 
+            case key of
                "at_most" -> AtMost  <$> n'
                "exactly" -> Exactly <$> n'
                _         -> fail $ "unknown cost_kind " ++ unpack key
             where n' :: Parser Int
-                  n' = (pure . numberToInt) n
+                  n' = (pure . truncate) n
          _ -> fail $ badFormat o
    parseJSON other = fail $ badFormat other
 
@@ -143,7 +135,7 @@ data VPValue = Constant Int
 -- "(int)" | "?"
 instance FromJSON VPValue where
    parseJSON (String "?") = pure Variable
-   parseJSON (String s) = 
+   parseJSON (String s) =
       case reads (unpack s) :: [(Int, String)] of
          [(n, "")] -> pure $ Constant n
          _         -> fail $ unpack $ "unknown vp_value " `append` s
@@ -224,7 +216,7 @@ instance FromJSON Action where
                "spend_different_up_to" -> SpendDifferentUpTo <$> n'
                _                       -> fail $ badFormat o
             where n' :: Parser Int
-                  n' = (pure . numberToInt) n
+                  n' = (pure . truncate) n
          [(key, val@(Object _))] ->
             case key of
                "develop"              -> Develop            <$> parseJSON val
@@ -283,7 +275,7 @@ instance FromJSON Reward where
    parseJSON (String "settle_second_world")    = pure SettleSecondWorld
    parseJSON (String "take_over_imperium")     = pure TakeOverImperium
    parseJSON (String "take_over_rebel")        = pure TakeOverRebel
-   parseJSON (Object o) = 
+   parseJSON (Object o) =
       case H.toList o of
          [(key, Number n)] ->
             case key of
@@ -295,7 +287,7 @@ instance FromJSON Reward where
                "temporary_military"      -> TemporaryMilitary    <$> n'
                _                         -> fail $ badFormat o
             where n' :: Parser Int
-                  n' = (pure . numberToInt) n
+                  n' = (pure . truncate) n
          [(key, Bool b)] ->
             case key of
                "spend_for_trade_price" -> pure $ SpendForTradePrice b
@@ -350,7 +342,7 @@ instance FromJSON OtherPower where
       case H.toList o of
          [(key, Number n)] ->
             case key of
-               "larger_hand_limit" -> LargerHandLimit <$> (pure . numberToInt) n
+               "larger_hand_limit" -> LargerHandLimit <$> (pure . truncate) n
                _                   -> fail $ badFormat o
          _ -> fail $ badFormat o
    parseJSON other = fail $ badFormat other
