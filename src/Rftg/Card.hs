@@ -58,11 +58,12 @@ data GoodKind = Any
               | AlienTechnology
               deriving (Show)
 
--- "any" | "novelty" | "rare_elements" | "alien_technology"
+-- "any" | "novelty" | "rare_elements" | "genes" | "alien_technology"
 instance FromJSON GoodKind where
    parseJSON (String "any")              = pure Any
    parseJSON (String "novelty")          = pure Novelty
    parseJSON (String "rare_elements")    = pure RareElements
+   parseJSON (String "genes")            = pure Genes
    parseJSON (String "alien_technology") = pure AlienTechnology
    parseJSON _                           = fail "good_kind expects 'any', 'novelty', 'rare_elements', 'genes', or 'alien_technology'"
 
@@ -151,16 +152,18 @@ instance FromJSON VPValue where
          )
    parseJSON other = fail $ badFormat other
 
+-- VP qualifiers, used to score 6-devs. In the case of GalacticExchange, the
+-- int paired with it (to form a VPValue) doesn't matter.
 data VPQualifier = Qualifier CardQualifier -- name, production type, etc
-                 | TotalMilitary           -- +1 per military
-                 | TotalPrestige           -- +1 per prestige
+                 | PerMilitary             -- per military
+                 | PerPrestige             -- per prestige
                  | GalacticExchange        -- 1/3/6/10 for 1/2/3/4 different kinds of goods (production or windfall)
                  deriving (Show)
 
--- CardQualifier | "military" | "prestige" | "galactic_exchange"
+-- CardQualifier | "per_military" | "per_prestige" | "galactic_exchange"
 instance FromJSON VPQualifier where
-   parseJSON (String "military")          = pure TotalMilitary
-   parseJSON (String "prestige")          = pure TotalPrestige
+   parseJSON (String "per_military")          = pure PerMilitary
+   parseJSON (String "per_prestige")          = pure PerPrestige
    parseJSON (String "galactic_exchange") = pure GalacticExchange
    parseJSON v = Qualifier <$> parseJSON v
 
@@ -214,9 +217,9 @@ instance FromJSON CardQualifier where
    parseJSON (String "chromosome") = pure ChromosomeQualifier
    parseJSON (String "prestige") = pure PrestigeQualifier
    parseJSON (String s) =
-      case s' of
-         _ | "<=" `isPrefixOf` s' -> CostAtMost  <$> strToInt (drop 2 s')
-         _                        -> CostExactly <$> strToInt s'
+      if "<=" `isPrefixOf` s'
+      then CostAtMost  <$> strToInt (drop 2 s')
+      else CostExactly <$> strToInt s'
       where s' = unpack s
    parseJSON (Object o) = do
       let [(key, val)] = H.toList o
@@ -314,6 +317,9 @@ data Reward =
    | VictoryPointsVariable  Int           Bool -- Gain a variable amount of VPS (dependent upon the action) for that amound plus n, can-times-two
    deriving (Show)
 
+-- no-argument constructor:  string
+-- one-argument constructor: object with constructor as key, arg as value
+-- two-argument constructor: object with constructor as key, array of args as value
 instance FromJSON Reward where
    parseJSON (String "ante_and_draw_if_lucky") = pure AnteAndDrawIfLucky
    parseJSON (String "draw_if_lucky")          = pure DrawIfLucky
