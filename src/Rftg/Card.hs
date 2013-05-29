@@ -2,7 +2,7 @@
 
 module Rftg.Card where
 
-import Control.Applicative ((<$>), (<*>), pure)
+import Control.Applicative ((<$>), (<*>), liftA, pure)
 import Data.Aeson
    ( FromJSON
    , Value(..)
@@ -10,7 +10,10 @@ import Data.Aeson
    , eitherDecode', parseJSON, withBool, withNumber
    )
 import Data.Aeson.Types (Parser)
+import Data.Maybe (fromMaybe)
+import Data.List (isPrefixOf)
 import Data.Text (append, unpack)
+import Data.Traversable (forM)
 
 import qualified Data.ByteString.Lazy.Char8 as BS
 import qualified Data.HashMap.Lazy as H
@@ -24,6 +27,11 @@ withBool' = withBool "" pure
 
 withNumber' :: Value -> Parser Int
 withNumber' = withNumber "" (pure . truncate)
+
+strToInt :: String -> Parser Int
+strToInt t = case reads t :: [(Int, String)] of
+                 [(n, "")] -> pure n
+                 _         -> fail $ "expected int-as-string, got " ++ t
 
 data CardKind = World
               | Development deriving (Show)
@@ -89,18 +97,6 @@ instance FromJSON NameKind where
    parseJSON (String "uplift")       = pure Uplift
    parseJSON _                       = fail "name_kind expects 'alien', 'imperium', 'rebel', 'terraforming', or 'uplift'"
 
-data SymbolKind = Chromosome
-                | Circle
-                | Diamond
-                deriving (Show)
-
--- "chromosome" | "circle" | "diamond"
-instance FromJSON SymbolKind where
-   parseJSON (String "chromosome") = pure Chromosome
-   parseJSON (String "circle")     = pure Circle
-   parseJSON (String "diamond")    = pure Diamond
-   parseJSON _                     = fail "symbol_kind expects 'chromosome', 'circle', or 'diamond'"
-
 data CostKind = AtMost Int
               | Exactly Int
               deriving (Show)
@@ -130,58 +126,110 @@ instance FromJSON StartWorldColor where
    parseJSON _               = fail "start_world_color expects 'red' or 'blue'"
 
 data VPValue = Constant Int
-             | Variable deriving (Show)
+             | Variable [(Int, VPQualifier)] -- Qualifier and amount expressed in a map
+             deriving (Show)
 
--- "(int)" | "?"
+-- constant: (int)
+-- variable:
+--    [
+--       { (int): VPQualifier }
+--       { (int): VPQualifier }
+--       ...
+--    ]
 instance FromJSON VPValue where
-   parseJSON (String "?") = pure Variable
-   parseJSON (String s) =
-      case reads (unpack s) :: [(Int, String)] of
-         [(n, "")] -> pure $ Constant n
-         _         -> fail $ unpack $ "unknown vp_value " `append` s
+   parseJSON (Number n) = pure $ Constant (truncate n)
+   parseJSON (Array arr) = Variable <$>
+      V.toList <$>
+         forM arr (\arrItem ->
+            case arrItem of
+               Object o -> do
+                  let [(key, val)] = H.toList o
+                  amount <- strToInt (unpack key)
+                  qualifier <- parseJSON val
+                  pure (amount, qualifier)
+               _ -> fail $ "excepted object as element of vp_value array, got " ++ show arrItem
+         )
+   parseJSON other = fail $ badFormat other
+
+data VPQualifier = Qualifier CardQualifier -- name, production type, etc
+                 | TotalMilitary           -- +1 per military
+                 | TotalPrestige           -- +1 per prestige
+                 | GalacticExchange        -- 1/3/6/10 for 1/2/3/4 different kinds of goods (production or windfall)
+                 deriving (Show)
+
+-- CardQualifier | "military" | "prestige" | "galactic_exchange"
+instance FromJSON VPQualifier where
+   parseJSON (String "military")          = pure TotalMilitary
+   parseJSON (String "prestige")          = pure TotalPrestige
+   parseJSON (String "galactic_exchange") = pure GalacticExchange
+   parseJSON v = Qualifier <$> parseJSON v
 
 data CardQualifier =
      NoQualifier
-   | Not                  CardQualifier
-   | And                  CardQualifier CardQualifier
-   | ThisCard
-   | SettleQualifier      SettleKind
-   | ProductionQualifier  ProductionKind
-   | GoodQualifier        GoodKind
-   | NameQualifier        NameKind
-   | SymbolQualifier      SymbolKind
-   | CostQualifier        CostKind
+   | Not CardQualifier
+   | And CardQualifier CardQualifier
+   | ThisCardQualifier         -- This card
+   | MilitaryQualifier         -- Military world
+   | NonMilitaryQualifier      -- Non-military world
+   | ProductionQualifier       -- Production world
+   | WindfallQualifier         -- Windfall world
+   | AnyGoodQualifier          -- Any good (production or windfall)
+   | NoveltyQualifier          -- Novelty good
+   | GenesQualifier            -- Genes good
+   | RareElementsQualifier     -- Rare elements good
+   | AlienTechnologyQualifier  -- Alien technology good
+   | AlienQualifier            -- "Alien" card
+   | ImperiumQualifier         -- "Imperium" card
+   | RebelQualifier            -- "Rebel" card
+   | TerraformingQualifier     -- "Terraforming" card
+   | UpliftQualifier           -- "Uplift" card
+   | ChromosomeQualifier       -- Chromosome symbol
+   | PrestigeQualifier         -- Prestige symbol FIXME: is this used?
+   | NameQualifier String      -- The name of the card (used for scoring 6-devs)
+   | CostAtMost    Int         -- Costs at most
+   | CostExactly   Int         -- Costs exactly FIXME: is this used?
    deriving (Show)
 
--- no-argument constructor:  string
--- one-argument constructor: object with constructor as key, arg as value
--- two-argument constructor: object with constructor as key, array of args as value
+-- "no_qualifier" ... "alien_technology" ... etc
+-- for cost qualifiers:
+--    "<=6" for "at most 6"
+--    "6"   for "exactly 6"
 instance FromJSON CardQualifier where
    parseJSON (String "no_qualifier") = pure NoQualifier
-   parseJSON (String "this_card")    = pure ThisCard
-   parseJSON (Object o) =
-      case H.toList o of
-         [(key, val@(Object _))] ->
-            case key of
-               "not"                  -> Not                 <$> parseJSON val
-               "settle_qualifier"     -> SettleQualifier     <$> parseJSON val
-               "production_qualifier" -> ProductionQualifier <$> parseJSON val
-               "good_qualifier"       -> GoodQualifier       <$> parseJSON val
-               "name_qualifier"       -> NameQualifier       <$> parseJSON val
-               "symbol_qualifier"     -> SymbolQualifier     <$> parseJSON val
-               "cost_qualifier"       -> CostQualifier       <$> parseJSON val
-               _                      -> fail $ badFormat o
-         [(key, Array a)] ->
-            if V.length a == 2
-            then do
-               let arg0 = a `V.unsafeIndex` 0
-               let arg1 = a `V.unsafeIndex` 1
-
-               case key of
-                  "and" -> And <$> parseJSON arg0 <*> parseJSON arg1
-                  _     -> fail $ badFormat o
-            else fail $ badFormat o
-         _ -> fail $ badFormat o
+   parseJSON (String "this_card")    = pure ThisCardQualifier
+   parseJSON (String "military")     = pure MilitaryQualifier
+   parseJSON (String "non_military") = pure NonMilitaryQualifier
+   parseJSON (String "production") = pure ProductionQualifier
+   parseJSON (String "windfall") = pure WindfallQualifier
+   parseJSON (String "any_good") = pure AnyGoodQualifier
+   parseJSON (String "novelty") = pure NoveltyQualifier
+   parseJSON (String "genes") = pure GenesQualifier
+   parseJSON (String "rare_elements") = pure RareElementsQualifier
+   parseJSON (String "alien_technology") = pure AlienTechnologyQualifier
+   parseJSON (String "alien") = pure AlienQualifier
+   parseJSON (String "imperium") = pure ImperiumQualifier
+   parseJSON (String "rebel") = pure RebelQualifier
+   parseJSON (String "terraforming") = pure TerraformingQualifier
+   parseJSON (String "uplift") = pure UpliftQualifier
+   parseJSON (String "chromosome") = pure ChromosomeQualifier
+   parseJSON (String "prestige") = pure PrestigeQualifier
+   parseJSON (String s) =
+      case s' of
+         _ | "<=" `isPrefixOf` s' -> CostAtMost  <$> strToInt (drop 2 s')
+         _                        -> CostExactly <$> strToInt s'
+      where s' = unpack s
+   parseJSON (Object o) = do
+      let [(key, val)] = H.toList o
+      case key of
+         "not" -> Not <$> parseJSON val
+         "and" ->
+            case val of
+               Array a ->
+                  if V.length a == 2
+                  then And <$> parseJSON (a `V.unsafeIndex` 0) <*> parseJSON (a `V.unsafeIndex` 1)
+                  else fail failStr
+               _ -> fail failStr
+            where failStr = "'and' key expects 2-element array value"
    parseJSON other = fail $ badFormat other
 
 -- An Action is a condition/trigger for which a Reward is accrued. Powers that
@@ -319,9 +367,9 @@ instance FromJSON Reward where
          _ -> fail $ badFormat o
    parseJSON other = fail $ badFormat other
 
-data Power = Power { action  :: Maybe Action
-                   , rewards :: [Reward]
-                   , times   :: Int
+data Power = Power { pAction  :: Maybe Action
+                   , pRewards :: [Reward]
+                   , pTimes   :: Int
                    } deriving (Show)
 
 instance FromJSON Power where
@@ -348,22 +396,24 @@ instance FromJSON OtherPower where
    parseJSON other = fail $ badFormat other
 
 data Card =
-   Card { name            :: String
-        , kind            :: CardKind
-        , settleKind      :: Maybe SettleKind      -- Nothing for development cards
-        , productionKind  :: Maybe ProductionKind  -- Nothing for development cards, non-production worlds
-        , nameKinds       :: [NameKind]            -- [] if no names
-        , symbolKind      :: Maybe SymbolKind      -- Nothing if no symbol
-        , cost            :: Int
-        , vpValue         :: VPValue
-        , startWorldColor :: Maybe StartWorldColor -- Nothing if not start world
-        , explorePowers   :: [Power]
-        , developPowers   :: [Power]
-        , settlePowers    :: [Power]
-        , tradePowers     :: [Power]
-        , consumePowers   :: [Power]
-        , producePowers   :: [Power]
-        , otherPower      :: Maybe OtherPower
+   Card { cName            :: String
+        , cKind            :: CardKind
+        , cSettleKind      :: Maybe SettleKind      -- Nothing for development cards
+        , cProductionKind  :: Maybe ProductionKind  -- Nothing for development cards, non-production worlds
+        , cNameKinds       :: [NameKind]            -- [] if no names
+        , cChromosome      :: Bool                  -- Chromosome symbol
+        , cPrestige        :: Bool                  -- Prestige symbol
+        , cCost            :: Int
+        , cVpValue         :: VPValue
+        , cStartWorldColor :: Maybe StartWorldColor -- Nothing if not start world
+        , cStartHand       :: Maybe Int             -- Nothing if not part of a starter hand
+        , cExplorePowers   :: [Power]
+        , cDevelopPowers   :: [Power]
+        , cSettlePowers    :: [Power]
+        , cTradePowers     :: [Power]
+        , cConsumePowers   :: [Power]
+        , cProducePowers   :: [Power]
+        , cOtherPower      :: Maybe OtherPower
         } deriving (Show)
 
 instance FromJSON Card where
@@ -372,18 +422,20 @@ instance FromJSON Card where
            <*> o .:  "kind"
            <*> o .:? "settle_kind"
            <*> o .:? "production_kind"
-           <*> o .:  "name_kinds"
-           <*> o .:? "symbol_kind"
+           <*> liftA (fromMaybe [])    (o .:? "name_kinds")
+           <*> liftA (fromMaybe False) (o .:? "is_chromosome")
+           <*> liftA (fromMaybe False) (o .:? "is_prestige")
            <*> o .:  "cost"
            <*> o .:  "vp_value"
            <*> o .:? "start_world_color"
-           <*> o .:  "explore_powers"
-           <*> o .:  "develop_powers"
-           <*> o .:  "settle_powers"
-           <*> o .:  "trade_powers"
-           <*> o .:  "consume_powers"
-           <*> o .:  "produce_powers"
-           <*> o .:? "other_powers"
+           <*> o .:? "start_hand"
+           <*> liftA (fromMaybe []) (o .:?  "explore_powers")
+           <*> liftA (fromMaybe []) (o .:?  "develop_powers")
+           <*> liftA (fromMaybe []) (o .:?  "settle_powers")
+           <*> liftA (fromMaybe []) (o .:?  "trade_powers")
+           <*> liftA (fromMaybe []) (o .:? "consume_powers")
+           <*> liftA (fromMaybe []) (o .:?  "produce_powers")
+           <*> o .:? "other_power"
 
 getBaseCards ::  IO (Either String [Card])
 getBaseCards = do

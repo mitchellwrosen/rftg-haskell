@@ -6,21 +6,15 @@
       "production_kind": {
          "production": "any"
       },
-      "name_kinds": [],
       "cost": 3,
-      "vp_value": "2",
-      "explore_powers": [],
-      "develop_powers": [],
-      "settle_powers": [],
+      "vp_value": 2,
       "trade_powers": [
          {
-            "reward": [{
-               "draw": 1
-            }],
+            "reward": [
+               { "draw": 1 }
+            ],
             "times": 1
          }
-      ],
-      "consume_powers": [],
-      "produce_powers": []
+      ]
    }
 ]
