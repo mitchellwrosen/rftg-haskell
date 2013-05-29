@@ -7,17 +7,34 @@ import Data.Aeson
    ( FromJSON
    , Value(..)
    , (.:), (.:?)
-   , parseJSON, withBool, withNumber
+   , eitherDecode', parseJSON, withBool, withNumber
    )
 import Data.Aeson.Types (Parser)
 import Data.Attoparsec.Number (Number(..))
-import Data.Text (Text, unpack)
+import Data.Text (append, Text, unpack)
 
+import qualified Data.ByteString.Lazy.Char8 as BS
 import qualified Data.HashMap.Lazy as H
 import qualified Data.Vector as V
 
--- Cards -----------------------------------------------------------------------
-data CardKind = World | Development deriving (Show)
+badNumArgs :: Text -> Int -> Int -> String
+badNumArgs key actual expected =
+   unpack key ++ " received " ++ show actual ++ " args (expected " ++ show expected ++ ")"
+
+badFormat :: Show s => s -> String
+badFormat s = "bad format or unknown key: " ++ show s
+
+numberToInt :: Number -> Int
+numberToInt (I n) = fromIntegral n
+
+withBool' :: Value -> Parser Bool
+withBool' = withBool "" pure
+
+withNumber' :: Value -> Parser Int
+withNumber' = withNumber "" (pure . numberToInt)
+
+data CardKind = World
+              | Development deriving (Show)
 
 -- "world" | "development"
 instance FromJSON CardKind where
@@ -25,7 +42,8 @@ instance FromJSON CardKind where
    parseJSON (String "development") = pure Development
    parseJSON _                      = fail "card_kind expects 'world' or 'development'"
 
-data SettleKind = Military | NonMilitary deriving (Show)
+data SettleKind = Military
+                | NonMilitary deriving (Show)
 
 -- "military" | "non_military"
 instance FromJSON SettleKind where
@@ -48,24 +66,20 @@ instance FromJSON GoodKind where
    parseJSON (String "alien_technology") = pure AlienTechnology
    parseJSON _                           = fail "good_kind expects 'any', 'novelty', 'rare_elements', 'genes', or 'alien_technology'"
 
--- { "production" | "windfall" : GoodKind }
+-- { 
+--    "production" | "windfall": GoodKind
+-- }
 data ProductionKind = Production GoodKind
                     | Windfall GoodKind
                     deriving (Show)
 
 instance FromJSON ProductionKind where
    parseJSON (Object o) = do
-      let [(key, Array arr)] = H.toList o
+      let [(key, val)] = H.toList o
       case key of
-         "production" ->
-            if V.length arr == 1
-            then Production <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "production expects good_kind argument"
-         "windfall" ->
-            if V.length arr == 1
-            then Windfall <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "windfall expects one good_kind argument"
-         _ -> fail "production_kind object expects key 'production' or 'windfall'"
+         "production" -> Production <$> parseJSON val
+         "windfall"   -> Windfall   <$> parseJSON val
+         _            -> fail $ unpack $ "unknown production_kind " `append` key
 
 data NameKind = Alien
               | Imperium
@@ -93,18 +107,47 @@ instance FromJSON SymbolKind where
    parseJSON (String "chromosome") = pure Chromosome
    parseJSON (String "circle")     = pure Circle
    parseJSON (String "diamond")    = pure Diamond
-   parseJSON _                      = fail "symbol_kind expects 'chromosome', 'circle', or 'diamond'"
+   parseJSON _                     = fail "symbol_kind expects 'chromosome', 'circle', or 'diamond'"
 
 data CostKind = AtMost Int
               | Exactly Int
               deriving (Show)
 
+-- { 
+--    "at_most" | "exactly": (int)
+-- }
+instance FromJSON CostKind where
+   parseJSON (Object o) =
+      case H.toList o of 
+         [(key, Number n)] ->
+            case key of 
+               "at_most" -> AtMost  <$> n'
+               "exactly" -> Exactly <$> n'
+               _         -> fail $ "unknown cost_kind " ++ unpack key
+            where n' :: Parser Int
+                  n' = (pure . numberToInt) n
+         _ -> fail $ badFormat o
+   parseJSON other = fail $ badFormat other
+
 data StartWorldColor = Red | Blue deriving (Show)
+
+-- "red" | "blue"
+instance FromJSON StartWorldColor where
+   parseJSON (String "red")  = pure Red
+   parseJSON (String "blue") = pure Blue
+   parseJSON _               = fail "start_world_color expects 'red' or 'blue'"
 
 data VPValue = Constant Int
              | Variable deriving (Show)
 
--- Powers ----------------------------------------------------------------------
+-- "(int)" | "?"
+instance FromJSON VPValue where
+   parseJSON (String "?") = pure Variable
+   parseJSON (String s) = 
+      case reads (unpack s) :: [(Int, String)] of
+         [(n, "")] -> pure $ Constant n
+         _         -> fail $ unpack $ "unknown vp_value " `append` s
+
 data CardQualifier =
      NoQualifier
    | Not                  CardQualifier
@@ -118,52 +161,36 @@ data CardQualifier =
    | CostQualifier        CostKind
    deriving (Show)
 
+-- no-argument constructor:  string
+-- one-argument constructor: object with constructor as key, arg as value
+-- two-argument constructor: object with constructor as key, array of args as value
 instance FromJSON CardQualifier where
-   parseJSON (Object o) = do
-      let [(key, Array arr)] = H.toList o
-      case key of
-         "no_qualifier" ->
-            if V.length arr == 0
-            then pure NoQualifier
-            else fail "no_qualifier expects no arguments"
-         "not" ->
-            if V.length arr == 1
-            then Not <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "not expects card_qualifier argument"
-         "and" ->
-            if V.length arr == 2
-            then And <$> parseJSON (arr `V.unsafeIndex` 0)
-                     <*> parseJSON (arr `V.unsafeIndex` 1)
-            else fail "and expects two card_qualifier arguments"
-         "this_card" ->
-            if V.length arr == 0
-            then pure ThisCard
-            else fail "this_card expects no arguments"
-         "settle_qualifier" ->
-            if V.length arr == 1
-            then Not <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "settle_qualifier expects settle_kind argument"
-         "production_qualifier" ->
-            if V.length arr == 1
-            then Not <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "production_qualifier expects production_kind argument"
-         "good_qualifier" ->
-            if V.length arr == 1
-            then Not <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "good_qualifier expects good_kind argument"
-         "name_qualifier" ->
-            if V.length arr == 1
-            then Not <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "name_qualifier expects name_kind argument"
-         "symbol_qualifier" ->
-            if V.length arr == 1
-            then Not <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "symbol_qualifier expects symbol_kind argument"
-         "cost_qualifier" ->
-            if V.length arr == 1
-            then Not <$> parseJSON (arr `V.unsafeIndex` 0)
-            else fail "cost_qualifier expects cost_kind argument"
-         _ -> fail $ "unknown card_qualifier " ++ unpack key
+   parseJSON (String "no_qualifier") = pure NoQualifier
+   parseJSON (String "this_card")    = pure ThisCard
+   parseJSON (Object o) =
+      case H.toList o of
+         [(key, val@(Object _))] ->
+            case key of
+               "not"                  -> Not                 <$> parseJSON val
+               "settle_qualifier"     -> SettleQualifier     <$> parseJSON val
+               "production_qualifier" -> ProductionQualifier <$> parseJSON val
+               "good_qualifier"       -> GoodQualifier       <$> parseJSON val
+               "name_qualifier"       -> NameQualifier       <$> parseJSON val
+               "symbol_qualifier"     -> SymbolQualifier     <$> parseJSON val
+               "cost_qualifier"       -> CostQualifier       <$> parseJSON val
+               _                      -> fail $ badFormat o
+         [(key, Array a)] ->
+            if V.length a == 2
+            then do
+               let arg0 = a `V.unsafeIndex` 0
+               let arg1 = a `V.unsafeIndex` 1
+
+               case key of
+                  "and" -> And <$> parseJSON arg0 <*> parseJSON arg1
+                  _     -> fail $ badFormat o
+            else fail $ badFormat o
+         _ -> fail $ badFormat o
+   parseJSON other = fail $ badFormat other
 
 -- An Action is a condition/trigger for which a Reward is accrued. Powers that
 -- have no such conditions have NoAction.
@@ -181,6 +208,37 @@ data Action =
    | SpendPrestige                         -- Spend 1 prestige
    | Trade                 CardQualifier   -- Trade the specified card
    deriving (Show)
+
+-- no-argument constructor:  string
+-- one-argument constructor: object with constructor as key, arg as value
+instance FromJSON Action where
+   parseJSON (String "pay")             = pure Pay
+   parseJSON (String "spend_all_goods") = pure SpendAllGoods
+   parseJSON (String "spend_prestige")  = pure SpendPrestige
+   parseJSON (Object o) =
+      case H.toList o of
+         [(key, Number n)] ->
+            case key of
+               "discard_from_hand"     -> DiscardFromHand    <$> n'
+               "spend_different"       -> SpendDifferent     <$> n'
+               "spend_different_up_to" -> SpendDifferentUpTo <$> n'
+               _                       -> fail $ badFormat o
+            where n' :: Parser Int
+                  n' = (pure . numberToInt) n
+         [(key, val@(Object _))] ->
+            case key of
+               "develop"              -> Develop            <$> parseJSON val
+               "discard_from_tableau" -> DiscardFromTableau <$> parseJSON val
+               "produce"              -> Produce            <$> parseJSON val
+               "settle"               -> Settle             <$> parseJSON val
+               "trade"                -> Trade              <$> parseJSON val
+               _                      -> fail $ badFormat o
+         [(key, Array a)] ->
+            case key of
+               "spend_good" -> SpendGood <$> (fmap V.toList . V.mapM parseJSON) a
+               _            -> fail $ badFormat o
+         _ -> fail $ badFormat o
+   parseJSON other = fail $ badFormat other
 
 data Reward =
      AnteAndDrawIfLucky                        -- From RvI
@@ -217,111 +275,85 @@ data Reward =
    deriving (Show)
 
 instance FromJSON Reward where
-   parseJSON (Object o) = do
-      let [(key, Array arr)] = H.toList o
+   parseJSON (String "ante_and_draw_if_lucky") = pure AnteAndDrawIfLucky
+   parseJSON (String "draw_if_lucky")          = pure DrawIfLucky
+   parseJSON (String "draw_saved_cards")       = pure DrawSavedCards
+   parseJSON (String "mix_and_match")          = pure MixAndMatch
+   parseJSON (String "save_card")              = pure SaveCard
+   parseJSON (String "settle_second_world")    = pure SettleSecondWorld
+   parseJSON (String "take_over_imperium")     = pure TakeOverImperium
+   parseJSON (String "take_over_rebel")        = pure TakeOverRebel
+   parseJSON (Object o) = 
+      case H.toList o of
+         [(key, Number n)] ->
+            case key of
+               "draw"                    -> Draw                 <$> n'
+               "draw_then_discard"       -> DrawThenDiscard      <$> n'
+               "keep"                    -> Keep                 <$> n'
+               "prestige"                -> Prestige             <$> n'
+               "reduce_pay_for_military" -> ReducePayForMilitary <$> n'
+               "temporary_military"      -> TemporaryMilitary    <$> n'
+               _                         -> fail $ badFormat o
+            where n' :: Parser Int
+                  n' = (pure . numberToInt) n
+         [(key, Bool b)] ->
+            case key of
+               "spend_for_trade_price" -> pure $ SpendForTradePrice b
+               _                       -> fail $ badFormat o
+         [(key, val@(Object _))] ->
+            case key of
+               "draw_for_kind_produced" -> DrawForKindProduced <$> parseJSON val
+               "prestige_for_most"      -> PrestigeForMost     <$> parseJSON val
+               "produce_card"           -> ProduceCard         <$> parseJSON val
+               "receive_good"           -> ReceiveGood         <$> parseJSON val
+               "reduce_cost_to_zero"    -> ReduceCostToZero    <$> parseJSON val
+               _                        -> fail $ badFormat o
+         [(key, Array a)] ->
+            if V.length a == 2
+            then do
+               let arg0 = a `V.unsafeIndex` 0
+               let arg1 = a `V.unsafeIndex` 1
 
-      let numArgs = V.length arr
-      let arg0 = arr `V.unsafeIndex` 0
-      let arg1 = arr `V.unsafeIndex` 1
-
-      case key of
-         "draw" ->
-            if numArgs == 1
-            then Draw <$> withNumber' key (pure . numberToInt) arg0
-            else fail $ badNumArgs key numArgs 1
-         "draw_if_lucky" ->
-            if numArgs == 0
-            then pure DrawIfLucky
-            else fail $ badNumArgs key numArgs 0
-         "draw_for_kind_produced" ->
-            if numArgs == 1
-            then DrawForKindProduced <$> parseJSON arg0
-            else fail $ badNumArgs key numArgs 1
-         "draw_for_kinds_produced" ->
-            if numArgs == 0
-            then pure DrawForKindsProduced
-            else fail $ badNumArgs key numArgs 0
-         "draw_for_most_produced" ->
-            if numArgs == 2
-            then DrawForMostProduced <$> parseJSON arg0
-                                     <*> withNumber' key (pure . numberToInt) arg1
-            else fail $ badNumArgs key numArgs 2
-         "draw_for_tableau" ->
-            if numArgs == 2
-            then DrawForTableau <$> parseJSON arg0
-                                <*> withNumber' key (pure . numberToInt) arg1
-            else fail $ badNumArgs key numArgs 2
-         "keep" ->
-            if numArgs == 1
-            then Keep <$> withNumber' key (pure . numberToInt) arg0
-            else fail $ badNumArgs key numArgs 1
-         "pay_for_military" ->
-            if numArgs == 2
-            then PayForMilitary <$> parseJSON arg0
-                                <*> withNumber' key (pure . numberToInt) arg1
-            else fail $ badNumArgs key numArgs 2
-         "plus_military" ->
-            if numArgs == 2
-            then PlusMilitary <$> parseJSON arg0
-                              <*> withNumber' key (pure . numberToInt) arg1
-            else fail $ badNumArgs key numArgs 2
-         "produce_card" ->
-            if numArgs == 1
-            then ProduceCard <$> parseJSON arg0
-            else fail $ badNumArgs key numArgs 1
-         "reduce_cost" ->
-            if numArgs == 2
-            then ReduceCost <$> parseJSON arg0
-                            <*> withNumber' key (pure . numberToInt) arg1
-            else fail $ badNumArgs key numArgs 2
-         "reduce_cost_to_zero" ->
-            if numArgs == 1
-            then ReduceCostToZero <$> parseJSON arg0
-            else fail $ badNumArgs key numArgs 1
-         "spend_for_trade_price" ->
-            if numArgs == 1
-            then SpendForTradePrice <$> withBool' key pure arg0
-            else fail $ badNumArgs key numArgs 1
-         "temporary_military" ->
-            if numArgs == 1
-            then TemporaryMilitary <$> withNumber' key (pure . numberToInt) arg0
-            else fail $ badNumArgs key numArgs 1
-         "victory_points" ->
-            if numArgs == 2
-            then VictoryPoints <$> withNumber' key (pure . numberToInt) arg0
-                               <*> withBool' key pure arg1
-            else fail $ badNumArgs key numArgs 2
-         "victory_points_variable" ->
-            if numArgs == 2
-            then VictoryPointsVariable <$> withNumber' key (pure . numberToInt) arg0
-                                       <*> withBool' key pure arg1
-            else fail $ badNumArgs key numArgs 2
-         _ -> fail $ "unknown reward " ++ unpack key
-
-      where badNumArgs :: Text -> Int -> Int -> String
-            badNumArgs key actual expected =
-               unpack key ++ " received " ++ show actual ++ " args (expected "
-               ++ show expected ++ ")"
-
-            withBool' :: Text -> (Bool -> Parser a) -> Value -> Parser a
-            withBool' = withBool . (\key -> unpack key ++ " expected bool argument")
-
-            withNumber' :: Text -> (Number -> Parser a) -> Value -> Parser a
-            withNumber' = withNumber . (\key -> unpack key ++ " expected number argument")
-
-numberToInt :: Number -> Int
-numberToInt (I n) = fromIntegral n
+               case key of
+                  "draw_for_most_produced"  -> DrawForMostProduced   <$> parseJSON arg0   <*> withNumber' arg1
+                  "draw_for_tableau"        -> DrawForTableau        <$> parseJSON arg0   <*> withNumber' arg1
+                  "pay_for_military"        -> PayForMilitary        <$> parseJSON arg0   <*> withNumber' arg1
+                  "plus_military"           -> PlusMilitary          <$> parseJSON arg0   <*> withNumber' arg1
+                  "reduce_cost"             -> ReduceCost            <$> parseJSON arg0   <*> withNumber' arg1
+                  "victory_points"          -> VictoryPoints         <$> withNumber' arg0 <*> withBool' arg1
+                  "victory_points_variable" -> VictoryPointsVariable <$> withNumber' arg0 <*> withBool' arg1
+                  _                         -> fail $ badFormat o
+            else fail $ badFormat o
+         _ -> fail $ badFormat o
+   parseJSON other = fail $ badFormat other
 
 data Power = Power { action  :: Maybe Action
                    , rewards :: [Reward]
                    , times   :: Int
                    } deriving (Show)
 
+instance FromJSON Power where
+   parseJSON (Object o) =
+      Power <$> o .:? "action"
+            <*> o .:  "reward"
+            <*> o .:  "times"
+
 data OtherPower = LargerHandLimit Int
                 | SeeOtherPlayersActions
                 | GainOtherPlayersDiscards
                 deriving (Show)
 
+instance FromJSON OtherPower where
+   parseJSON (String "see_other_players_actions")   = pure SeeOtherPlayersActions
+   parseJSON (String "gain_other_players_discards") = pure GainOtherPlayersDiscards
+   parseJSON (Object o) =
+      case H.toList o of
+         [(key, Number n)] ->
+            case key of
+               "larger_hand_limit" -> LargerHandLimit <$> (pure . numberToInt) n
+               _                   -> fail $ badFormat o
+         _ -> fail $ badFormat o
+   parseJSON other = fail $ badFormat other
 
 data Card =
    Card { name            :: String
@@ -331,7 +363,7 @@ data Card =
         , nameKinds       :: [NameKind]            -- [] if no names
         , symbolKind      :: Maybe SymbolKind      -- Nothing if no symbol
         , cost            :: Int
-        , vp              :: VPValue
+        , vpValue         :: VPValue
         , startWorldColor :: Maybe StartWorldColor -- Nothing if not start world
         , explorePowers   :: [Power]
         , developPowers   :: [Power]
@@ -339,6 +371,7 @@ data Card =
         , tradePowers     :: [Power]
         , consumePowers   :: [Power]
         , producePowers   :: [Power]
+        , otherPower      :: Maybe OtherPower
         } deriving (Show)
 
 instance FromJSON Card where
@@ -350,7 +383,7 @@ instance FromJSON Card where
            <*> o .:  "name_kinds"
            <*> o .:? "symbol_kind"
            <*> o .:  "cost"
-           <*> o .:  "vp"
+           <*> o .:  "vp_value"
            <*> o .:? "start_world_color"
            <*> o .:  "explore_powers"
            <*> o .:  "develop_powers"
@@ -358,3 +391,9 @@ instance FromJSON Card where
            <*> o .:  "trade_powers"
            <*> o .:  "consume_powers"
            <*> o .:  "produce_powers"
+           <*> o .:? "other_powers"
+
+getBaseCards ::  IO (Either String [Card])
+getBaseCards = do
+   json <- BS.readFile "./cards_base.json"
+   return (eitherDecode' json :: Either String [Card])
