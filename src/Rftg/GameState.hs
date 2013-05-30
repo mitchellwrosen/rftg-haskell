@@ -1,25 +1,16 @@
-module Rftg.GameState where
+{-# LANGUAGE TemplateHaskell #-}
 
-import System.Random.Shuffle (shuffleM)
+module Rftg.GameState where
 
 import Rftg.Card
 import Rftg.Goal
 import Rftg.Phase
 import Rftg.Player
 
-data GameState =
-   GameState { gPlayers            :: [Player]
-             , gDeck               :: [Card]
-             , gDiscard            :: [Card]
-             , gFirstGoals         :: [Goal]
-             , gMostGoals          :: [Goal]
-             , gVPPool             :: Int
-             , gPhases             :: [Phase]  -- Phases selected this round
-             , gCurPhase           :: Phase
-             , gRoundNum           :: Int
-             , gGameOver           :: Bool
-             , gSettings           :: GameSettings
-             }
+import Control.Lens (makeLenses)
+import Data.Label (get)
+import System.Random.Shuffle (shuffleM)
+
 
 data GameSettings =
    GameSettings { gIs2PlayerAdvanced  :: Bool
@@ -30,21 +21,38 @@ data GameSettings =
                 , gUsesBOW            :: Bool
                 }
 
+data GameState =
+   GameState { _gPlayers            :: [Player]
+             , _gDeck               :: [Card]
+             , _gDiscard            :: [Card]
+             , _gFirstGoals         :: [Goal]
+             , _gMostGoals          :: [Goal]
+             , _gVPPool             :: Int
+             , _gPhases             :: [Phase]  -- Phases selected this round
+             , _gCurPhase           :: Phase
+             , _gRoundNum           :: Int
+             , _gGameOver           :: Bool
+             , _gSettings           :: GameSettings
+             }
+
+makeLenses ''GameState
+
 initGameState :: GameSettings -> Int -> IO GameState
 initGameState settings num_players = do
    deck <- getDeck settings
    (first_goals, most_goals) <- getGoals settings
-   return GameState { gPlayers        = undefined
-                    , gDeck           = deck
-                    , gDiscard        = []
-                    , gFirstGoals     = first_goals
-                    , gMostGoals      = most_goals
-                    , gVPPool         = num_players * 12
-                    , gPhases         = []
-                    , gCurPhase       = InitPhase
-                    , gRoundNum       = 0
-                    , gGameOver       = False
-                    , gSettings       = settings
+   -- TODO: use lenses
+   return GameState { _gPlayers        = undefined
+                    , _gDeck           = deck
+                    , _gDiscard        = []
+                    , _gFirstGoals     = first_goals
+                    , _gMostGoals      = most_goals
+                    , _gVPPool         = num_players * 12
+                    , _gPhases         = []
+                    , _gCurPhase       = InitPhase
+                    , _gRoundNum       = 0
+                    , _gGameOver       = False
+                    , _gSettings       = settings
                     }
 
 getDeck :: GameSettings -> IO [Card]
@@ -74,7 +82,7 @@ getDeck settings =
                return $ removeGamblingWorld deck ++ rvi -- FIXME: does this `remove` belong?
             else return deck
 
-         removeGamblingWorld = filter ((/= "Gambling World") . cName)
+         removeGamblingWorld = filter ((/= "Gambling World") . get cName)
 
 -- Gets (first, most) goals from the available pool.
 getGoals :: GameSettings -> IO ([Goal], [Goal])

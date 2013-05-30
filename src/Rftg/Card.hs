@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell, OverloadedStrings #-}
 
 module Rftg.Card where
 
@@ -11,6 +11,7 @@ import Data.Aeson
    )
 import Data.Aeson.Types (Parser)
 import Data.Maybe (fromMaybe)
+import Data.Label (mkLabel)
 import Data.List (isPrefixOf)
 import Data.Text (append, unpack)
 import Data.Traversable (forM)
@@ -402,25 +403,27 @@ instance FromJSON OtherPower where
    parseJSON other = fail $ badFormat other
 
 data Card =
-   Card { cName            :: String
-        , cKind            :: CardKind
-        , cSettleKind      :: Maybe SettleKind      -- Nothing for development cards
-        , cProductionKind  :: Maybe ProductionKind  -- Nothing for development cards, non-production worlds
-        , cNameKinds       :: [NameKind]            -- [] if no names
-        , cChromosome      :: Bool                  -- Chromosome symbol
-        , cPrestige        :: Bool                  -- Prestige symbol
-        , cCost            :: Int
-        , cVpValue         :: VPValue
-        , cStartWorldColor :: Maybe StartWorldColor -- Nothing if not start world
-        , cStartHand       :: Maybe Int             -- Nothing if not part of a starter hand
-        , cExplorePowers   :: [Power]
-        , cDevelopPowers   :: [Power]
-        , cSettlePowers    :: [Power]
-        , cTradePowers     :: [Power]
-        , cConsumePowers   :: [Power]
-        , cProducePowers   :: [Power]
-        , cOtherPower      :: Maybe OtherPower
+   Card { _cName            :: String
+        , _cKind            :: CardKind
+        , _cSettleKind      :: Maybe SettleKind      -- Nothing for development cards
+        , _cProductionKind  :: Maybe ProductionKind  -- Nothing for development cards, non-production worlds
+        , _cNameKinds       :: [NameKind]            -- [] if no names
+        , _cChromosome      :: Bool                  -- Chromosome symbol
+        , _cPrestige        :: Bool                  -- Prestige symbol
+        , _cCost            :: Int
+        , _cVpValue         :: VPValue
+        , _cStartWorldColor :: Maybe StartWorldColor -- Nothing if not start world
+        , _cStartHand       :: Maybe Int             -- Nothing if not part of a starter hand
+        , _cExplorePowers   :: [Power]
+        , _cDevelopPowers   :: [Power]
+        , _cSettlePowers    :: [Power]
+        , _cTradePowers     :: [Power]
+        , _cConsumePowers   :: [Power]
+        , _cProducePowers   :: [Power]
+        , _cOtherPower      :: Maybe OtherPower
         } deriving (Show)
+
+mkLabel ''Card
 
 instance FromJSON Card where
    parseJSON (Object o) =
