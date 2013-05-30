@@ -10,7 +10,6 @@ import qualified Data.Map as M
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.Gdk.GC
 import Graphics.UI.Gtk.Gdk.Drawable
-import Graphics.UI.Gtk.Gdk.Events
 
 import System.FilePath
 import System.Directory (getDirectoryContents)
@@ -18,7 +17,11 @@ import Control.Monad
 import Control.Monad.State as State
 
 type Deck = M.Map String Pixbuf
-type Hand = [String]
+data HandCard = HandCard {
+    name :: String
+   ,selected :: Bool
+}
+type Hand = [HandCard]
 
 emptyGameGUI = GameGUI Nothing
                        Nothing
@@ -49,8 +52,24 @@ data GameGUI = GameGUI {
    ,context :: Maybe HBox
    ,hand    :: Maybe DrawingArea
    ,opponents :: Maybe HBox
-   ,player    :: Maybe VBox
+   ,playerTableau :: Maybe DrawingArea
 }
+
+getMenu = fromJust . menu
+getCard = fromJust . card
+getDrawDiscardPool = fromJust . drawDiscardPool
+getPlayHistory = fromJust . playHistory
+getExplore = fromJust . explore
+getDevelop = fromJust . develop
+getSettle = fromJust . settle
+getConsume = fromJust . consume
+getProduce = fromJust . produce
+getDone = fromJust . done
+getContext = fromJust . context
+getHand = fromJust . hand
+getOpponents = fromJust . opponents
+getPlayerTableau = fromJust . playerTableau
+
 
 type StateIO a = StateT GameGUI IO a
 
@@ -100,11 +119,15 @@ infoBox = do
    liftIO $ boxPackStart box playHistory     PackGrow 0
    return box
 
-opponentsBox :: IO HBox
+opponentsBox :: StateIO HBox
 opponentsBox = do
-   box  <- hBoxNew False 0
+   box  <- liftIO $ hBoxNew False 0
    opp1 <- tableauBox colorRed
-   boxPackStart box opp1 PackGrow 0
+   state <- State.get
+   put $ state {
+      opponents = Just box
+   }
+   liftIO $ boxPackStart box opp1 PackGrow 0
    return box
 
 phaseIconImage    = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/no_phase_icon.jpg" 32 32
@@ -133,26 +156,25 @@ playerStatusBox = do
 tableausBox :: StateIO VBox
 tableausBox = do
    box       <- liftIO $ vBoxNew False 0
-   opponents <- liftIO opponentsBox
-   player    <- liftIO $ tableauBox colorBlue
+   opponents <- opponentsBox
+   player    <- tableauBox colorBlue
    sep       <- liftIO hSeparatorNew
-   state <- State.get
-   put $ state {
-        opponents = Just opponents
-       ,player    = Just player
-   }
    liftIO $ boxPackStart box opponents PackGrow    0
    liftIO $ boxPackStart box sep       PackNatural 0
    liftIO $ boxPackStart box player    PackGrow    0
    return box
 
-tableauBox :: Color -> IO VBox
+tableauBox :: Color -> StateIO VBox
 tableauBox color = do
-   box          <- vBoxNew False 0
-   tableau      <- tableauDrawingArea color
-   playerStatus <- playerStatusBox
-   boxPackStart box tableau        PackGrow    0
-   boxPackStart box playerStatus   PackNatural 0
+   box          <- liftIO $ vBoxNew False 0
+   tableau      <- liftIO $ tableauDrawingArea color
+   playerStatus <- liftIO playerStatusBox
+   state <- State.get
+   put $ state {
+        playerTableau = Just tableau
+   }
+   liftIO $ boxPackStart box tableau        PackGrow    0
+   liftIO $ boxPackStart box playerStatus   PackNatural 0
    return box
 
 tableauDrawingArea :: Color -> IO DrawingArea
@@ -232,48 +254,97 @@ currentHandHeight width =
 setPixbuf :: Image -> Deck -> String -> IO ()
 setPixbuf image deck card = imageSetFromPixbuf image (fromJust $ M.lookup card deck)
 
-getHand :: Deck -> Hand -> [Pixbuf]
-getHand deck = map (\key -> fromJust $ M.lookup key deck)
+getPixbufsForHand :: Deck -> Hand -> [Pixbuf]
+getPixbufsForHand deck = map (\key -> fromJust $ M.lookup (name key) deck)
 
-motionOccurredInHand :: GameGUI -> Deck -> Hand -> Event -> IO Bool
-motionOccurredInHand gui deck cards motion = do
-   let drawingArea = fromJust $ hand gui
-   (width, height) <- widgetGetSize drawingArea
-   let x = eventX motion
-       y = eventY motion
-       ndx = (round x) `quot` (xOffsetInHand width cards)
+motionInTableau :: GameGUI -> Deck -> Hand -> EventM EMotion Bool
+motionInTableau gui deck cards = do
+   let drawingArea = fromJust $ playerTableau gui
+   (width, height) <- liftIO $ widgetGetSize drawingArea
+   (x, y) <- eventCoordinates
+   let ndx = (round x) `quot` (width `quot` 6)
    -- TODO : check the y value too
-   when (ndx < length cards && (round y) > cardPadding (currentCardHeight width)) $
-      setPixbuf (fromJust $ card gui) deck (cards !! ndx)
+   liftIO $ when (ndx < length cards) $
+      setPixbuf (getCard gui) deck (name $ cards !! ndx)
+   return True
+
+toggleCardAtIndex :: Hand -> Int -> Hand
+toggleCardAtIndex [] _        = undefined
+toggleCardAtIndex (card:xs) 0 = card { selected = not (selected card) } : xs
+toggleCardAtIndex (x:xs) ndx  = x : toggleCardAtIndex xs (ndx - 1)
+
+buttonPressedInHand :: GameGUI -> Deck -> IORef Hand -> EventM EButton Bool
+buttonPressedInHand gui deck cardsRef = do
+   let drawingArea = getHand gui
+   cards <- liftIO $ readIORef cardsRef
+   (width, height) <- liftIO $ widgetGetSize drawingArea
+   clickType <- eventClick
+   button <- eventButton
+   (x, y) <- eventCoordinates
+   let ndx = (round x) `quot` (xOffsetInHand width cards)
+   liftIO $ when (ndx < length cards &&
+                  (round y) > cardPadding (currentCardHeight width) &&
+                  clickType == SingleClick &&
+                  button == LeftButton) $ do
+      writeIORef cardsRef (toggleCardAtIndex cards ndx)
+      widgetQueueDraw drawingArea
+   return True
+
+motionInHand :: GameGUI -> Deck -> IORef Hand -> EventM EMotion Bool
+motionInHand gui deck handRef = do
+   let drawingArea = getHand gui
+   cards <- liftIO $ readIORef handRef
+   (width, height) <- liftIO $ widgetGetSize drawingArea
+   (x, y) <- eventCoordinates
+   let ndx = (round x) `quot` (xOffsetInHand width cards)
+   -- TODO : check the y value too
+   liftIO $ when (ndx < length cards && (round y) > cardPadding (currentCardHeight width)) $
+      setPixbuf (getCard gui) deck (name $ cards !! ndx)
    return True
 
 xOffsetInHand :: Int -> Hand -> Int
 xOffsetInHand width cards = min (width `quot` 6) (width `quot` length cards)
 
-drawCurrentHand :: DrawingArea -> Deck -> Hand -> IO ()
-drawCurrentHand drawingArea deck hand = do
-   (width, _)      <- widgetGetSize drawingArea
-   drawWindow      <- widgetGetDrawWindow drawingArea
-   gc              <- gcNew drawWindow
+drawCurrentHand :: DrawingArea -> Deck -> IORef Hand -> EventM EExpose Bool
+drawCurrentHand drawingArea deck handRef = do
+   hand            <- liftIO $ readIORef handRef
+   (width, _)      <- liftIO $ widgetGetSize drawingArea
+   drawWindow      <- liftIO $ widgetGetDrawWindow drawingArea
+   gc              <- liftIO $ gcNew drawWindow
    let height  = currentCardHeight width
-       cards   = getHand deck hand
+       cards   = getPixbufsForHand deck hand
        xOffset = xOffsetInHand width hand
-   pixbufs <- forM cards (\card -> pixbufScaleSimple card (width `quot` 6) height InterpBilinear)
+   pixbufs <- liftIO $ forM cards (\card -> pixbufScaleSimple card (width `quot` 6) height InterpBilinear)
    -- TODO: I don't really like these next two lines
-   forM_ [0..length cards - 1] (\i ->
+   liftIO $ forM_ [0..length cards - 1] (\i ->
+      let destY = if selected (hand !! i)
+                  then 0
+                  else (cardPadding height)
+      in drawPixbuf drawWindow gc
+                    (pixbufs !! i)                     -- pixbuf to draw
+                    0 0                                -- srcx srcy
+                    (xOffset * i) destY                -- destx desty
+                    (-1) (-1) RgbDitherNone 0 0)       -- dithering
+   liftIO $ widgetQueueDraw drawingArea
+   return True
+
+drawCurrentTableau :: DrawingArea -> Deck -> Hand -> EventM EExpose Bool
+drawCurrentTableau drawingArea deck hand = do
+   drawWindow <- liftIO $ widgetGetDrawWindow drawingArea
+   (width, _) <- liftIO $ widgetGetSize drawingArea
+   gc         <- liftIO $ gcNew drawWindow
+   let height  = currentCardHeight width
+       cards   = getPixbufsForHand deck hand
+       xOffset = width `quot` 6
+   pixbufs <- liftIO $ forM cards (\card ->
+         pixbufScaleSimple card (width `quot` 6) height InterpBilinear)
+   liftIO $ forM_ [0..length cards - 1] (\i ->
       drawPixbuf drawWindow gc
                  (pixbufs !! i)                     -- pixbuf to draw
                  0 0                                -- srcx srcy
-                 (xOffset * i) (cardPadding height) -- destx desty
+                 (xOffset * i) 0                    -- destx desty
                  (-1) (-1) RgbDitherNone 0 0)       -- dithering
-   widgetQueueDraw drawingArea
-
-drawCurrentTableau :: DrawingArea -> Hand -> IO Bool
-drawCurrentTableau drawingArea _ = do
-   drawWindow      <- widgetGetDrawWindow drawingArea
-   (width, height) <- widgetGetSize drawingArea
-   gc              <- gcNew drawWindow
-   --drawPixbuf drawWindow gc pix 0 0 0 0 (-1) (-1) RgbDitherNone 0 0
+   liftIO $ widgetQueueDraw drawingArea
    return True
 
 requestHandDrawingAreaSize drawingArea _ = do
@@ -366,23 +437,30 @@ loadCardPixbufs = do
    cardPairs <- mapM loadCardPixbuf cardNames
    return $ M.fromList cardPairs
 
-onExpose_ :: WidgetClass w => w -> IO () -> IO ()
-onExpose_ widget func = do
-   onExpose widget exposeFunc
-   return ()
-   where exposeFunc :: Event -> IO Bool
-         exposeFunc _ = do
-            func
-            return True
-
 main :: IO ()
 main = do
    initGUI
    deck <- loadCardPixbufs
    (window, gui) <- runStateT gameWindow emptyGameGUI
-   let cards = ["old_earth.jpg", "alien_uplift_center.jpg", "blaster_gem_mines.jpg"]
-   onMotionNotify (fromJust $ hand gui) True (motionOccurredInHand gui deck cards)
-   onExpose_ (fromJust $ hand gui) (drawCurrentHand (fromJust $ hand gui) deck cards)
+
+   let cards = [HandCard "old_earth.jpg" False,
+                HandCard "alien_uplift_center.jpg" False,
+                HandCard "blaster_gem_mines.jpg" False,
+                HandCard "lost_species_ark_world.jpg" False,
+                HandCard "deserted_alien_world.jpg" False,
+                HandCard "free_trade_association.jpg" False]
+       table = [HandCard "interstellar_casus_belli.jpg" False]
+
+   cardsRef <- newIORef cards
+   widgetAddEvents (getHand gui) [PointerMotionMask, ButtonPressMask]
+   on (getHand gui) exposeEvent (drawCurrentHand (getHand gui) deck cardsRef)
+   on (getHand gui) motionNotifyEvent (motionInHand gui deck cardsRef)
+   on (getHand gui) buttonPressEvent (buttonPressedInHand gui deck cardsRef)
+
+   widgetAddEvents (getPlayerTableau gui) [PointerMotionMask]
+   on (getPlayerTableau gui) exposeEvent (drawCurrentTableau (getPlayerTableau gui) deck table)
+   on (getPlayerTableau gui) motionNotifyEvent (motionInTableau gui deck table)
+
    onDestroy window mainQuit
    widgetShowAll window
    mainGUI
