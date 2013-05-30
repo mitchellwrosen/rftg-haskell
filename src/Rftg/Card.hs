@@ -443,7 +443,13 @@ instance FromJSON Card where
            <*> liftA (fromMaybe []) (o .:?  "produce_powers")
            <*> o .:? "other_power"
 
-getBaseCards ::  IO (Either String [Card])
+getBaseCards ::  IO [Card]
 getBaseCards = do
    json <- BS.readFile "./cards_base.json"
-   return (eitherDecode' json :: Either String [Card])
+   case eitherDecode' json :: Either String [Card] of
+      Left err    -> error err -- error seems fine here, since bad json = broken program
+      Right cards -> return cards
+
+getTGSCards = undefined -- TODO
+getRVICards = undefined -- TODO
+getBOWCards = undefined -- TODO
