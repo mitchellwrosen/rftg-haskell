@@ -17,11 +17,15 @@ import Control.Monad
 import Control.Monad.State as State
 
 type Deck = M.Map String Pixbuf
-data HandCard = HandCard {
-    name :: String
-   ,selected :: Bool
-}
+
+type Name = String
+type Selected = Bool
+type HasGood = Bool
+data TableauCard = TableauCard Name Selected HasGood
+data HandCard = HandCard Name Selected
+
 type Hand = [HandCard]
+type Tableau = [TableauCard]
 
 emptyGameGUI = GameGUI Nothing
                        Nothing
@@ -251,13 +255,22 @@ currentHandHeight width =
        padding = cardPadding height
    in height + padding
 
+lookupCardPixbuf :: Deck -> String -> Pixbuf
+lookupCardPixbuf m card = fromJust $ M.lookup card m
+
+cardBack :: Deck -> Pixbuf
+cardBack deck = lookupCardPixbuf deck "card_back.jpg"
+
 setPixbuf :: Image -> Deck -> String -> IO ()
-setPixbuf image deck card = imageSetFromPixbuf image (fromJust $ M.lookup card deck)
+setPixbuf image deck card = imageSetFromPixbuf image (lookupCardPixbuf deck card)
 
 getPixbufsForHand :: Deck -> Hand -> [Pixbuf]
-getPixbufsForHand deck = map (\key -> fromJust $ M.lookup (name key) deck)
+getPixbufsForHand deck = map (\(HandCard name _) -> lookupCardPixbuf deck name)
 
-motionInTableau :: GameGUI -> Deck -> Hand -> EventM EMotion Bool
+getPixbufsForTableau :: Deck -> Tableau -> [Pixbuf]
+getPixbufsForTableau deck = map (\(TableauCard name _ _) -> lookupCardPixbuf deck name)
+
+motionInTableau :: GameGUI -> Deck -> Tableau -> EventM EMotion Bool
 motionInTableau gui deck cards = do
    let drawingArea = fromJust $ playerTableau gui
    (width, height) <- liftIO $ widgetGetSize drawingArea
@@ -265,12 +278,13 @@ motionInTableau gui deck cards = do
    let ndx = (round x) `quot` (width `quot` 6)
    -- TODO : check the y value too
    liftIO $ when (ndx < length cards) $
-      setPixbuf (getCard gui) deck (name $ cards !! ndx)
+      let TableauCard name _ _ = cards !! ndx
+      in setPixbuf (getCard gui) deck name
    return True
 
 toggleCardAtIndex :: Hand -> Int -> Hand
 toggleCardAtIndex [] _        = undefined
-toggleCardAtIndex (card:xs) 0 = card { selected = not (selected card) } : xs
+toggleCardAtIndex ((HandCard name selected):xs) 0 = HandCard name (not selected) : xs
 toggleCardAtIndex (x:xs) ndx  = x : toggleCardAtIndex xs (ndx - 1)
 
 buttonPressedInHand :: GameGUI -> Deck -> IORef Hand -> EventM EButton Bool
@@ -299,7 +313,8 @@ motionInHand gui deck handRef = do
    let ndx = (round x) `quot` (xOffsetInHand width cards)
    -- TODO : check the y value too
    liftIO $ when (ndx < length cards && (round y) > cardPadding (currentCardHeight width)) $
-      setPixbuf (getCard gui) deck (name $ cards !! ndx)
+      let HandCard name selected = cards !! ndx
+      in setPixbuf (getCard gui) deck name
    return True
 
 xOffsetInHand :: Int -> Hand -> Int
@@ -317,7 +332,8 @@ drawCurrentHand drawingArea deck handRef = do
    pixbufs <- liftIO $ forM cards (\card -> pixbufScaleSimple card (width `quot` 6) height InterpBilinear)
    -- TODO: I don't really like these next two lines
    liftIO $ forM_ [0..length cards - 1] (\i ->
-      let destY = if selected (hand !! i)
+      let HandCard name selected = hand !! i
+          destY = if selected
                   then 0
                   else (cardPadding height)
       in drawPixbuf drawWindow gc
@@ -328,22 +344,30 @@ drawCurrentHand drawingArea deck handRef = do
    liftIO $ widgetQueueDraw drawingArea
    return True
 
-drawCurrentTableau :: DrawingArea -> Deck -> Hand -> EventM EExpose Bool
-drawCurrentTableau drawingArea deck hand = do
+drawCurrentTableau :: DrawingArea -> Deck -> Tableau -> EventM EExpose Bool
+drawCurrentTableau drawingArea deck tableau = do
    drawWindow <- liftIO $ widgetGetDrawWindow drawingArea
    (width, _) <- liftIO $ widgetGetSize drawingArea
    gc         <- liftIO $ gcNew drawWindow
    let height  = currentCardHeight width
-       cards   = getPixbufsForHand deck hand
+       cards   = getPixbufsForTableau deck tableau
        xOffset = width `quot` 6
    pixbufs <- liftIO $ forM cards (\card ->
          pixbufScaleSimple card (width `quot` 6) height InterpBilinear)
-   liftIO $ forM_ [0..length cards - 1] (\i ->
+
+   cardBackPixbuf <- liftIO $
+         pixbufScaleSimple (cardBack deck) (width `quot` 8) (height * 3 `quot` 4) InterpBilinear
+
+   liftIO $ forM_ [0..length cards - 1] (\i -> do
+      let TableauCard _ _ hasGood = tableau !! i
       drawPixbuf drawWindow gc
                  (pixbufs !! i)                     -- pixbuf to draw
                  0 0                                -- srcx srcy
                  (xOffset * i) 0                    -- destx desty
-                 (-1) (-1) RgbDitherNone 0 0)       -- dithering
+                 (-1) (-1) RgbDitherNone 0 0        -- dithering
+      when hasGood $ drawPixbuf drawWindow gc cardBackPixbuf 0 0
+                       (xOffset * i + width `quot` 24) (height `quot` 4)
+                       (-1) (-1) RgbDitherNone 0 0)
    liftIO $ widgetQueueDraw drawingArea
    return True
 
@@ -449,7 +473,7 @@ main = do
                 HandCard "lost_species_ark_world.jpg" False,
                 HandCard "deserted_alien_world.jpg" False,
                 HandCard "free_trade_association.jpg" False]
-       table = [HandCard "interstellar_casus_belli.jpg" False]
+       table = [TableauCard "interstellar_casus_belli.jpg" False True]
 
    cardsRef <- newIORef cards
    widgetAddEvents (getHand gui) [PointerMotionMask, ButtonPressMask]
