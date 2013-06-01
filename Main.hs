@@ -14,7 +14,7 @@ import Graphics.UI.Gtk.Gdk.Drawable
 import System.FilePath
 import System.Directory (getDirectoryContents)
 import Control.Monad
-import Control.Monad.State as State
+import Control.Monad.State
 
 type Deck = M.Map String Pixbuf
 
@@ -59,20 +59,20 @@ data GameGUI = GameGUI {
    ,playerTableau :: Maybe DrawingArea
 }
 
-getMenu = fromJust . menu
-getCard = fromJust . card
+getMenu            = fromJust . menu
+getCard            = fromJust . card
 getDrawDiscardPool = fromJust . drawDiscardPool
-getPlayHistory = fromJust . playHistory
-getExplore = fromJust . explore
-getDevelop = fromJust . develop
-getSettle = fromJust . settle
-getConsume = fromJust . consume
-getProduce = fromJust . produce
-getDone = fromJust . done
-getContext = fromJust . context
-getHand = fromJust . hand
-getOpponents = fromJust . opponents
-getPlayerTableau = fromJust . playerTableau
+getPlayHistory     = fromJust . playHistory
+getExplore         = fromJust . explore
+getDevelop         = fromJust . develop
+getSettle          = fromJust . settle
+getConsume         = fromJust . consume
+getProduce         = fromJust . produce
+getDone            = fromJust . done
+getContext         = fromJust . context
+getHand            = fromJust . hand
+getOpponents       = fromJust . opponents
+getPlayerTableau   = fromJust . playerTableau
 
 
 type StateIO a = StateT GameGUI IO a
@@ -84,8 +84,7 @@ cardImageDims = (372, 520)
 cardImage :: StateIO Image
 cardImage = do
    image <- liftIO $ imageNewFromFile "images/cards/card_back.jpg"
-   state <- State.get
-   put $ state { card = Just image }
+   modify (\state -> state { card = Just image })
    return image
 
 currentCardHeight :: Int -> Int
@@ -98,8 +97,7 @@ currentCardHeight width =
 drawDiscardPoolLabel :: StateIO Label
 drawDiscardPoolLabel = do
    label <- liftIO $ labelNew (Just $ drawDiscardPoolText 100 0 48)
-   state <- State.get
-   put $ state { drawDiscardPool = Just label }
+   modify (\state -> state { drawDiscardPool = Just label })
    return label
 
 playHistoryTextView :: StateIO TextView
@@ -107,8 +105,7 @@ playHistoryTextView = do
    view <- liftIO textViewNew
    liftIO $ textViewSetEditable view False
    liftIO $ textViewSetCursorVisible view False
-   state <- State.get
-   put $ state { playHistory = Just view }
+   modify (\state -> state { playHistory = Just view })
    return view
 
 infoBox :: StateIO VBox
@@ -127,17 +124,14 @@ opponentsBox :: StateIO HBox
 opponentsBox = do
    box  <- liftIO $ hBoxNew False 0
    opp1 <- tableauBox colorRed
-   state <- State.get
-   put $ state {
-      opponents = Just box
-   }
+   modify (\state -> state { opponents = Just box })
    liftIO $ boxPackStart box opp1 PackGrow 0
    return box
 
-phaseIconImage    = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/no_phase_icon.jpg" 32 32
-scoreIconImage    = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/score_icon.jpg" 32 32
-handIconImage     = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/hand_icon.jpg" 32 32
-militaryIconImage = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/military_icon.jpg" 32 32
+phaseIconImage    = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/no_phase_icon.png" 32 32
+scoreIconImage    = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/score_icon.png" 32 32
+handIconImage     = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/hand_icon.png" 32 32
+militaryIconImage = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/military_icon.png" 32 32
 
 playerStatusBox :: IO HBox
 playerStatusBox = do
@@ -173,10 +167,7 @@ tableauBox color = do
    box          <- liftIO $ vBoxNew False 0
    tableau      <- liftIO $ tableauDrawingArea color
    playerStatus <- liftIO playerStatusBox
-   state <- State.get
-   put $ state {
-        playerTableau = Just tableau
-   }
+   modify (\state -> state { playerTableau = Just tableau })
    liftIO $ boxPackStart box tableau        PackGrow    0
    liftIO $ boxPackStart box playerStatus   PackNatural 0
    return box
@@ -207,14 +198,13 @@ phaseBox = do
    settle  <- liftIO settleLabel
    consume <- liftIO consumeLabel
    produce <- liftIO produceLabel
-   state <- State.get
-   put $ state {
+   modify (\state -> state {
        explore = Just explore
       ,develop = Just develop
       ,settle  = Just settle
       ,consume = Just consume
       ,produce = Just produce
-   }
+   })
    liftIO $ boxPackStart box explore PackGrow 0
    liftIO $ boxPackStart box develop PackGrow 0
    liftIO $ boxPackStart box settle  PackGrow 0
@@ -237,11 +227,10 @@ actionBox = do
    box  <- liftIO $ hBoxNew False 0
    done <- liftIO doneButton
    context <- liftIO contextBox
-   state <- State.get
-   put $ state {
+   modify (\state -> state {
        done = Just done
       ,context = Just context
-   }
+   })
    liftIO $ boxPackStart box context PackGrow    0
    liftIO $ boxPackStart box done    PackNatural 0
    return box
@@ -393,8 +382,7 @@ playerBox = do
    hand    <- liftIO handDrawingArea
    sep1    <- liftIO hSeparatorNew
    sep2    <- liftIO hSeparatorNew
-   state <- State.get
-   put $ state { hand = Just hand }
+   modify (\state -> state { hand = Just hand })
    liftIO $ boxPackStart box phase   PackNatural 0
    liftIO $ boxPackStart box sep1    PackNatural 0
    liftIO $ boxPackStart box action  PackNatural 0
@@ -416,8 +404,7 @@ menuBar :: StateIO MenuBar
 menuBar = do
    menu  <- liftIO menuBarNew
    game  <- liftIO $ menuItemNewWithLabel "Game"
-   state <- State.get
-   put $ state { menu = Just menu }
+   modify (\state -> state { menu = Just menu })
    liftIO $ containerAdd menu game
    return menu
 
