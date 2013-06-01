@@ -15,6 +15,7 @@ import System.FilePath
 import System.Directory (getDirectoryContents)
 import Control.Monad
 import Control.Monad.State
+import GameGUI
 
 type Deck = M.Map String Pixbuf
 
@@ -27,53 +28,6 @@ data HandCard = HandCard Name Selected
 type Hand = [HandCard]
 type Tableau = [TableauCard]
 
-emptyGameGUI = GameGUI Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-                       Nothing
-
-data GameGUI = GameGUI {
-    menu :: Maybe MenuBar
-   ,card :: Maybe Image
-   ,drawDiscardPool :: Maybe Label
-   ,playHistory     :: Maybe TextView
-   ,explore :: Maybe Label
-   ,develop :: Maybe Label
-   ,settle  :: Maybe Label
-   ,consume :: Maybe Label
-   ,produce :: Maybe Label
-   ,done    :: Maybe Button
-   ,context :: Maybe HBox
-   ,hand    :: Maybe DrawingArea
-   ,opponents :: Maybe HBox
-   ,playerTableau :: Maybe DrawingArea
-}
-
-getMenu            = fromJust . menu
-getCard            = fromJust . card
-getDrawDiscardPool = fromJust . drawDiscardPool
-getPlayHistory     = fromJust . playHistory
-getExplore         = fromJust . explore
-getDevelop         = fromJust . develop
-getSettle          = fromJust . settle
-getConsume         = fromJust . consume
-getProduce         = fromJust . produce
-getDone            = fromJust . done
-getContext         = fromJust . context
-getHand            = fromJust . hand
-getOpponents       = fromJust . opponents
-getPlayerTableau   = fromJust . playerTableau
-
 
 type StateIO a = StateT GameGUI IO a
 
@@ -84,7 +38,7 @@ cardImageDims = (372, 520)
 cardImage :: StateIO Image
 cardImage = do
    image <- liftIO $ imageNewFromFile "images/cards/card_back.jpg"
-   modify (\state -> state { card = Just image })
+   modify (setCard image)
    return image
 
 currentCardHeight :: Int -> Int
@@ -97,7 +51,7 @@ currentCardHeight width =
 drawDiscardPoolLabel :: StateIO Label
 drawDiscardPoolLabel = do
    label <- liftIO $ labelNew (Just $ drawDiscardPoolText 100 0 48)
-   modify (\state -> state { drawDiscardPool = Just label })
+   modify (setDrawDiscardPool label)
    return label
 
 playHistoryTextView :: StateIO TextView
@@ -105,7 +59,7 @@ playHistoryTextView = do
    view <- liftIO textViewNew
    liftIO $ textViewSetEditable view False
    liftIO $ textViewSetCursorVisible view False
-   modify (\state -> state { playHistory = Just view })
+   modify (setPlayHistory view)
    return view
 
 infoBox :: StateIO VBox
@@ -124,7 +78,7 @@ opponentsBox :: StateIO HBox
 opponentsBox = do
    box  <- liftIO $ hBoxNew False 0
    opp1 <- tableauBox colorRed
-   modify (\state -> state { opponents = Just box })
+   modify (setOpponents box)
    liftIO $ boxPackStart box opp1 PackGrow 0
    return box
 
@@ -167,7 +121,7 @@ tableauBox color = do
    box          <- liftIO $ vBoxNew False 0
    tableau      <- liftIO $ tableauDrawingArea color
    playerStatus <- liftIO playerStatusBox
-   modify (\state -> state { playerTableau = Just tableau })
+   modify (setPlayerTableau tableau)
    liftIO $ boxPackStart box tableau        PackGrow    0
    liftIO $ boxPackStart box playerStatus   PackNatural 0
    return box
@@ -198,13 +152,11 @@ phaseBox = do
    settle  <- liftIO settleLabel
    consume <- liftIO consumeLabel
    produce <- liftIO produceLabel
-   modify (\state -> state {
-       explore = Just explore
-      ,develop = Just develop
-      ,settle  = Just settle
-      ,consume = Just consume
-      ,produce = Just produce
-   })
+   modify $ (setExplore explore) .
+            (setDevelop develop) .
+            (setSettle  settle)  .
+            (setConsume consume) .
+            (setProduce produce)
    liftIO $ boxPackStart box explore PackGrow 0
    liftIO $ boxPackStart box develop PackGrow 0
    liftIO $ boxPackStart box settle  PackGrow 0
@@ -227,10 +179,7 @@ actionBox = do
    box  <- liftIO $ hBoxNew False 0
    done <- liftIO doneButton
    context <- liftIO contextBox
-   modify (\state -> state {
-       done = Just done
-      ,context = Just context
-   })
+   modify $ (setDone done) . (setContext context)
    liftIO $ boxPackStart box context PackGrow    0
    liftIO $ boxPackStart box done    PackNatural 0
    return box
@@ -261,7 +210,7 @@ getPixbufsForTableau deck = map (\(TableauCard name _ _) -> lookupCardPixbuf dec
 
 motionInTableau :: GameGUI -> Deck -> Tableau -> EventM EMotion Bool
 motionInTableau gui deck cards = do
-   let drawingArea = fromJust $ playerTableau gui
+   let drawingArea = getPlayerTableau gui
    (width, height) <- liftIO $ widgetGetSize drawingArea
    (x, y) <- eventCoordinates
    let ndx = (round x) `quot` (width `quot` 6)
@@ -382,7 +331,7 @@ playerBox = do
    hand    <- liftIO handDrawingArea
    sep1    <- liftIO hSeparatorNew
    sep2    <- liftIO hSeparatorNew
-   modify (\state -> state { hand = Just hand })
+   modify (setHand hand)
    liftIO $ boxPackStart box phase   PackNatural 0
    liftIO $ boxPackStart box sep1    PackNatural 0
    liftIO $ boxPackStart box action  PackNatural 0
@@ -404,7 +353,7 @@ menuBar :: StateIO MenuBar
 menuBar = do
    menu  <- liftIO menuBarNew
    game  <- liftIO $ menuItemNewWithLabel "Game"
-   modify (\state -> state { menu = Just menu })
+   modify (setMenu menu)
    liftIO $ containerAdd menu game
    return menu
 
