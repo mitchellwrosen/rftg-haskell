@@ -77,7 +77,7 @@ infoBox = do
 opponentsBox :: StateIO HBox
 opponentsBox = do
    box  <- liftIO $ hBoxNew False 0
-   opp1 <- tableauBox colorRed
+   (opp1, _) <- liftIO $ tableauBox colorRed
    modify (setOpponents box)
    liftIO $ boxPackStart box opp1 PackGrow 0
    return box
@@ -109,22 +109,22 @@ tableausBox :: StateIO VBox
 tableausBox = do
    box       <- liftIO $ vBoxNew False 0
    opponents <- opponentsBox
-   player    <- tableauBox colorBlue
    sep       <- liftIO hSeparatorNew
+   (player, tableau) <- liftIO $ tableauBox colorBlue
+   modify (setPlayerTableau tableau)
    liftIO $ boxPackStart box opponents PackGrow    0
    liftIO $ boxPackStart box sep       PackNatural 0
    liftIO $ boxPackStart box player    PackGrow    0
    return box
 
-tableauBox :: Color -> StateIO VBox
+tableauBox :: Color -> IO (VBox, DrawingArea)
 tableauBox color = do
-   box          <- liftIO $ vBoxNew False 0
-   tableau      <- liftIO $ tableauDrawingArea color
-   playerStatus <- liftIO playerStatusBox
-   modify (setPlayerTableau tableau)
-   liftIO $ boxPackStart box tableau        PackGrow    0
-   liftIO $ boxPackStart box playerStatus   PackNatural 0
-   return box
+   box          <- vBoxNew False 0
+   tableau      <- tableauDrawingArea color
+   playerStatus <- playerStatusBox
+   boxPackStart box tableau        PackGrow    0
+   boxPackStart box playerStatus   PackNatural 0
+   return (box, tableau)
 
 tableauDrawingArea :: Color -> IO DrawingArea
 tableauDrawingArea color = do
@@ -214,9 +214,16 @@ motionInTableau gui deck cards = do
    (width, height) <- liftIO $ widgetGetSize drawingArea
    (x, y) <- eventCoordinates
    let ndx = (round x) `quot` (width `quot` 6)
-   -- TODO : check the y value too
-   liftIO $ when (ndx < length cards) $
-      let TableauCard name _ _ = cards !! ndx
+       cardHeight  = currentCardHeight width
+       numCards = length cards
+       ndx' = if (round y) > height `quot` 2 && ndx + 6 < numCards
+              then ndx + 6
+              else ndx
+       card = if (round y) < cardHeight || ndx' >= 6 && (round y) < height `quot` 2 + cardHeight
+              then Just (cards !! ndx')
+              else Nothing
+   liftIO $ when (not $ isNothing card) $
+      let TableauCard name _ _ = fromJust card
       in setPixbuf (getCard gui) deck name
    return True
 
@@ -284,27 +291,33 @@ drawCurrentHand drawingArea deck handRef = do
 
 drawCurrentTableau :: DrawingArea -> Deck -> Tableau -> EventM EExpose Bool
 drawCurrentTableau drawingArea deck tableau = do
-   drawWindow <- liftIO $ widgetGetDrawWindow drawingArea
-   (width, _) <- liftIO $ widgetGetSize drawingArea
-   gc         <- liftIO $ gcNew drawWindow
-   let height  = currentCardHeight width
+   drawWindow      <- liftIO $ widgetGetDrawWindow drawingArea
+   (width, height) <- liftIO $ widgetGetSize drawingArea
+   gc              <- liftIO $ gcNew drawWindow
+
+   let cardHeight  = currentCardHeight width
        cards   = getPixbufsForTableau deck tableau
        xOffset = width `quot` 6
+
    pixbufs <- liftIO $ forM cards (\card ->
-         pixbufScaleSimple card (width `quot` 6) height InterpBilinear)
+         pixbufScaleSimple card (width `quot` 6) cardHeight InterpBilinear)
 
    cardBackPixbuf <- liftIO $
-         pixbufScaleSimple (cardBack deck) (width `quot` 8) (height * 3 `quot` 4) InterpBilinear
+         pixbufScaleSimple (cardBack deck) (width `quot` 8) (cardHeight * 3 `quot` 4) InterpBilinear
 
    liftIO $ forM_ [0..length cards - 1] (\i -> do
       let TableauCard _ _ hasGood = tableau !! i
+          destX = xOffset * (i `rem` 6)
+          destY = if i >= 6
+                  then height `quot` 2
+                  else 0
       drawPixbuf drawWindow gc
                  (pixbufs !! i)                     -- pixbuf to draw
                  0 0                                -- srcx srcy
-                 (xOffset * i) 0                    -- destx desty
+                 destX destY
                  (-1) (-1) RgbDitherNone 0 0        -- dithering
       when hasGood $ drawPixbuf drawWindow gc cardBackPixbuf 0 0
-                       (xOffset * i + width `quot` 24) (height `quot` 4)
+                       (destX + width `quot` 24) (destY + cardHeight `quot` 4)
                        (-1) (-1) RgbDitherNone 0 0)
    liftIO $ widgetQueueDraw drawingArea
    return True
@@ -409,7 +422,8 @@ main = do
                 HandCard "lost_species_ark_world.jpg" False,
                 HandCard "deserted_alien_world.jpg" False,
                 HandCard "free_trade_association.jpg" False]
-       table = [TableauCard "interstellar_casus_belli.jpg" False True]
+       table = replicate 6 (TableauCard "interstellar_casus_belli.jpg" False True) ++
+                           [TableauCard "old_earth.jpg" False True]
 
    cardsRef <- newIORef cards
    widgetAddEvents (getHand gui) [PointerMotionMask, ButtonPressMask]
