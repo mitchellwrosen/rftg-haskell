@@ -28,8 +28,10 @@ data HandCard = HandCard Name Selected
 type Hand = [HandCard]
 type Tableau = [TableauCard]
 
-
 type StateIO a = StateT GameGUI IO a
+
+data GUIState = GUIState {
+}
 
 drawDiscardPoolText :: Int -> Int -> Int -> String
 drawDiscardPoolText = printf "Draw: %d Discard: %d Pool: %d"
@@ -219,7 +221,8 @@ motionInTableau gui deck cards = do
        ndx' = if (round y) > height `quot` 2 && ndx + 6 < numCards
               then ndx + 6
               else ndx
-       card = if (round y) < cardHeight || ndx' >= 6 && (round y) < height `quot` 2 + cardHeight
+       card = if ndx' < numCards &&
+                 ((round y) < cardHeight || ndx' >= 6 && (round y) < height `quot` 2 + cardHeight)
               then Just (cards !! ndx')
               else Nothing
    liftIO $ when (not $ isNothing card) $
@@ -265,8 +268,9 @@ motionInHand gui deck handRef = do
 xOffsetInHand :: Int -> Hand -> Int
 xOffsetInHand width cards = min (width `quot` 6) (width `quot` length cards)
 
-drawCurrentHand :: DrawingArea -> Deck -> IORef Hand -> EventM EExpose Bool
-drawCurrentHand drawingArea deck handRef = do
+drawCurrentHand :: GameGUI -> Deck -> IORef Hand -> EventM EExpose Bool
+drawCurrentHand gui deck handRef = do
+   let drawingArea = (getHand gui)
    hand            <- liftIO $ readIORef handRef
    (width, _)      <- liftIO $ widgetGetSize drawingArea
    drawWindow      <- liftIO $ widgetGetDrawWindow drawingArea
@@ -275,7 +279,6 @@ drawCurrentHand drawingArea deck handRef = do
        cards   = getPixbufsForHand deck hand
        xOffset = xOffsetInHand width hand
    pixbufs <- liftIO $ forM cards (\card -> pixbufScaleSimple card (width `quot` 6) height InterpBilinear)
-   -- TODO: I don't really like these next two lines
    liftIO $ forM_ [0..length cards - 1] (\i ->
       let HandCard name selected = hand !! i
           destY = if selected
@@ -289,8 +292,9 @@ drawCurrentHand drawingArea deck handRef = do
    liftIO $ widgetQueueDraw drawingArea
    return True
 
-drawCurrentTableau :: DrawingArea -> Deck -> Tableau -> EventM EExpose Bool
-drawCurrentTableau drawingArea deck tableau = do
+drawCurrentTableau :: IORef GUIState -> GameGUI -> Deck -> Tableau -> EventM EExpose Bool
+drawCurrentTableau stateRef gui deck tableau = do
+   let drawingArea = getPlayerTableau gui
    drawWindow      <- liftIO $ widgetGetDrawWindow drawingArea
    (width, height) <- liftIO $ widgetGetSize drawingArea
    gc              <- liftIO $ gcNew drawWindow
@@ -422,19 +426,25 @@ main = do
                 HandCard "lost_species_ark_world.jpg" False,
                 HandCard "deserted_alien_world.jpg" False,
                 HandCard "free_trade_association.jpg" False]
-       table = replicate 6 (TableauCard "interstellar_casus_belli.jpg" False True) ++
-                           [TableauCard "old_earth.jpg" False True]
+       table = [TableauCard "old_earth.jpg" False True]
 
    cardsRef <- newIORef cards
+   stateRef ←: 
    widgetAddEvents (getHand gui) [PointerMotionMask, ButtonPressMask]
-   on (getHand gui) exposeEvent (drawCurrentHand (getHand gui) deck cardsRef)
+   on (getHand gui) exposeEvent (drawCurrentHand gui deck cardsRef)
    on (getHand gui) motionNotifyEvent (motionInHand gui deck cardsRef)
    on (getHand gui) buttonPressEvent (buttonPressedInHand gui deck cardsRef)
 
    widgetAddEvents (getPlayerTableau gui) [PointerMotionMask]
-   on (getPlayerTableau gui) exposeEvent (drawCurrentTableau (getPlayerTableau gui) deck table)
+   on (getPlayerTableau gui) exposeEvent (drawCurrentTableau stateRef gui deck table)
    on (getPlayerTableau gui) motionNotifyEvent (motionInTableau gui deck table)
 
    onDestroy window mainQuit
    widgetShowAll window
    mainGUI
+
+-- Controller
+
+beginExplorePhase :: GameGUI -> Hand -> Int -> IO ()
+beginExplorePhase gui hand keepCount = do
+   return ()
