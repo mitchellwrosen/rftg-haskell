@@ -13,6 +13,7 @@ import Graphics.UI.Gtk.Gdk.Drawable
 
 import System.FilePath
 import System.Directory (getDirectoryContents)
+import Control.Lens
 import Control.Monad
 import Control.Monad.State
 import GameGUI
@@ -246,12 +247,6 @@ toggleCardAtIndex [] _        = undefined
 toggleCardAtIndex ((HandCard name selected):xs) 0 = HandCard name (not selected) : xs
 toggleCardAtIndex (x:xs) ndx  = x : toggleCardAtIndex xs (ndx - 1)
 
-toggleCard :: Hand -> HandCard -> Hand
-toggleCard hand card = map toggleFunc hand
-   where toggleFunc c@(HandCard name sel) = if c == card
-                                            then HandCard name (not sel)
-                                            else c
-
 buttonPressedInHand :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
 buttonPressedInHand gui deck stateRef = do
    state <- liftIO $ readIORef stateRef
@@ -284,25 +279,25 @@ buttonPressedInHandExplore gui deck stateRef = do
    size <- liftIO $ widgetGetSize drawingArea
    coords <- eventCoordinates
    let explore = exploreCards state
-       card = getHandCardFromXYExplore (currentHand state) explore coords size
-   liftIO $ when (not . isNothing $ card) $ do
-      let c@(HandCard name _) = fromJust card
-      writeIORef stateRef (state { exploreCards = toggleCard explore c })
+       (handNdx, expNdx) = getHandCardIndexFromXYExplore (currentHand state) explore coords size
+   liftIO $ when (not . isNothing $ expNdx) $ do
+      writeIORef stateRef (state { exploreCards = toggleCardAtIndex explore (fromJust expNdx) })
       widgetQueueDraw drawingArea
    return True
 
-getHandCardFromXYExplore :: Hand -> Hand -> (Double, Double) -> (Int, Int) -> Maybe HandCard
-getHandCardFromXYExplore hand explore (xD, yD) (width, _) =
+getHandCardIndexFromXYExplore :: Hand -> Hand -> (Double, Double) -> (Int, Int) -> (Maybe Int, Maybe Int)
+getHandCardIndexFromXYExplore hand explore pos (width, _) =
    let (cardWidth, cardHeight) = (width, currentCardHeight width)
-       (x, y) = (round xD, round yD)
-       findCardFunc (c@(HandCard _ selected), (cardX, cardY)) Nothing
+       (x, y) = over both round pos
+       findCardFunc (((HandCard _ selected), (cardX, cardY)), ndx) Nothing
           | cardX < x && x < cardX + cardWidth &&
-            cardY < y && y < cardY + cardHeight = Just c
+            cardY < y && y < cardY + cardHeight = Just ndx
           | otherwise = Nothing
        findCardFunc _ foundCard = foundCard
-       cards = concatT $ getHandCardsXYForExplore hand explore width
-       concatT (a, b) = a ++ b
-   in foldr findCardFunc Nothing cards
+       (handCards, exploreCards) = getHandCardsXYForExplore hand explore width
+       zipIndices l = zip l [0..length l]
+   in (foldr findCardFunc Nothing (zipIndices handCards),
+       foldr findCardFunc Nothing (zipIndices exploreCards))
 
 motionInHandExplore :: GameGUI -> Deck -> IORef GUIState -> EventM EMotion Bool
 motionInHandExplore gui deck stateRef = do
@@ -310,7 +305,10 @@ motionInHandExplore gui deck stateRef = do
    state <- liftIO $ readIORef stateRef
    size <- liftIO $ widgetGetSize drawingArea
    coords <- eventCoordinates
-   let card = getHandCardFromXYExplore (currentHand state) (exploreCards state) coords size
+   let explore = exploreCards state
+       hand = currentHand state
+       (handNdx, expNdx) = getHandCardIndexFromXYExplore hand explore coords size
+       card = (fmap (explore !!) expNdx) `mplus` (fmap (hand !!) handNdx)
    liftIO $ when (not . isNothing $ card) $
       let (HandCard name _) = fromJust card
       in setPixbuf (getCard gui) deck name
@@ -545,12 +543,12 @@ main = do
    let cards = [HandCard "old_earth.jpg" False,
                 HandCard "alien_uplift_center.jpg" False,
                 HandCard "blaster_gem_mines.jpg" False,
-                HandCard "lost_species_ark_world.jpg" False,
+                HandCard "blaster_gem_mines.jpg" False,
                 HandCard "deserted_alien_world.jpg" False,
                 HandCard "free_trade_association.jpg" False]
        explore = [HandCard "the_last_of_the_uplift_gnarssh.jpg" False,
                   HandCard "space_marines.jpg" False,
-                  HandCard "interstellar_prospectors.jpg" False]
+                  HandCard "space_marines.jpg" False]
        table = [TableauCard "old_earth.jpg" False True]
 
    stateRef <- newIORef (GUIState cards [] Discard)
