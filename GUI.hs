@@ -37,6 +37,7 @@ data GUIState = GUIState {
     currentHand :: Hand
    ,exploreCards :: Hand
    ,currentActivity :: Activity
+   ,numDiscard :: Int
 }
 
 drawDiscardPoolText :: Int -> Int -> Int -> String
@@ -179,12 +180,13 @@ phaseBox = do
    return box
 
 doneButton = buttonNewWithLabel "Done"
+discardText num = "Choose " ++ show num ++ " cards to discard"
 
-contextLabel = labelNew (Just "Choose 2 cards to discard")
+discardLabel num = labelNew (Just $ discardText num)
 
 contextBox = do
    box <- hBoxNew False 0
-   context <- contextLabel
+   context <- discardLabel 2
    boxPackStart box context PackGrow 0
    return box
 
@@ -258,17 +260,17 @@ buttonPressedInHandDiscard :: GameGUI -> Deck -> IORef GUIState -> EventM EButto
 buttonPressedInHandDiscard gui deck stateRef = do
    state <- liftIO $ readIORef stateRef
    let drawingArea = getHand gui
-       cards = currentHand state
-   (width, height) <- liftIO $ widgetGetSize drawingArea
+       hand = currentHand state
+   size <- liftIO $ widgetGetSize drawingArea
    clickType <- eventClick
    button <- eventButton
-   (x, y) <- eventCoordinates
-   let ndx = (round x) `quot` (xOffsetInHand width (length cards))
-   liftIO $ when (ndx < length cards &&
-                  (round y) > cardPadding (currentCardHeight width) &&
+   coords <- eventCoordinates
+   let ndx = getHandCardIndexFromXYDiscard (currentHand state) coords size
+   liftIO $ when ((not . isNothing) ndx &&
                   clickType == SingleClick &&
                   button == LeftButton) $ do
-      writeIORef stateRef (state { currentHand = toggleCardAtIndex cards ndx })
+      putStrLn "In here"
+      writeIORef stateRef (state { currentHand = toggleCardAtIndex hand (fromJust ndx) })
       widgetQueueDraw drawingArea
    return True
 
@@ -278,9 +280,13 @@ buttonPressedInHandExplore gui deck stateRef = do
    state <- liftIO $ readIORef stateRef
    size <- liftIO $ widgetGetSize drawingArea
    coords <- eventCoordinates
+   clickType <- eventClick
+   button <- eventButton
    let explore = exploreCards state
        (handNdx, expNdx) = getHandCardIndexFromXYExplore (currentHand state) explore coords size
-   liftIO $ when (not . isNothing $ expNdx) $ do
+   liftIO $ when (clickType == SingleClick &&
+                  button == LeftButton &&
+                  (not . isNothing) expNdx) $ do
       writeIORef stateRef (state { exploreCards = toggleCardAtIndex explore (fromJust expNdx) })
       widgetQueueDraw drawingArea
    return True
@@ -314,17 +320,35 @@ motionInHandExplore gui deck stateRef = do
       in setPixbuf (getCard gui) deck name
    return True
 
+getHandCardsXYForDiscard :: Hand -> Int -> [(HandCard, (Int, Int))]
+getHandCardsXYForDiscard hand width =
+   let xOffset = xOffsetInHand width (length hand)
+       pad = cardPadding (currentCardHeight width)
+       pos c@(HandCard _ selected) i = (c, (xOffset * i, if selected then 0 else pad))
+   in mapI pos hand
+
+getHandCardIndexFromXYDiscard :: Hand -> (Double, Double) -> (Int, Int) -> Maybe Int
+getHandCardIndexFromXYDiscard hand pos (width, _) =
+   let (cardWidth, cardHeight) = (width, currentCardHeight width)
+       (x, y) = over both round pos
+       findCardFunc (((HandCard _ selected), (cardX, cardY)), ndx) Nothing
+          | cardX < x && x < cardX + cardWidth &&
+            cardY < y && y < cardY + cardHeight = Just ndx
+          | otherwise = Nothing
+       findCardFunc _ foundCard = foundCard
+       cards = getHandCardsXYForDiscard hand width
+       zipIndices l = zip l [0..length l]
+   in foldr findCardFunc Nothing (zipIndices cards)
+
 motionInHandDiscard :: GameGUI -> Deck -> IORef GUIState -> EventM EMotion Bool
 motionInHandDiscard gui deck stateRef = do
-   let drawingArea = getHand gui
    state <- liftIO $ readIORef stateRef
-   let cards = currentHand state
-   (width, height) <- liftIO $ widgetGetSize drawingArea
-   (x, y) <- eventCoordinates
-   let ndx = (round x) `quot` (xOffsetInHand width (length cards))
-   -- TODO : check the y value too
-   liftIO $ when (ndx < length cards && (round y) > cardPadding (currentCardHeight width)) $
-      let HandCard name selected = cards !! ndx
+   size <- liftIO $ widgetGetSize (getHand gui)
+   pos <- eventCoordinates
+   let hand = currentHand state
+       ndx = getHandCardIndexFromXYDiscard hand pos size
+   liftIO $ when (not . isNothing $ ndx) $
+      let HandCard name _ = hand !! (fromJust ndx)
       in setPixbuf (getCard gui) deck name
    return True
 
@@ -349,17 +373,13 @@ drawCurrentHandDiscard gui deck stateRef = do
        height  = currentCardHeight width
        cards   = getPixbufsForHand deck hand
        xOffset = xOffsetInHand width (length hand)
-   pixbufs <- liftIO $ forM cards (\card -> pixbufScaleSimple card (width `quot` 6) height InterpBilinear)
-   liftIO $ forM_ [0..length cards - 1] (\i ->
-      let HandCard name selected = hand !! i
-          destY = if selected
-                  then 0
-                  else (cardPadding height)
-      in drawPixbuf drawWindow gc
-                    (pixbufs !! i)                     -- pixbuf to draw
-                    0 0                                -- srcx srcy
-                    (xOffset * i) destY                -- destx desty
-                    (-1) (-1) RgbDitherNone 0 0)       -- dithering
+   liftIO$ forM_ (getHandCardsXYForDiscard hand width) (\((HandCard name _), (destX, destY)) -> do
+      pixbuf <- scaleCard deck name width height
+      drawPixbuf drawWindow gc
+                 pixbuf
+                 0 0                                -- srcx srcy
+                 destX destY
+                 (-1) (-1) RgbDitherNone 0 0)       -- dithering
    liftIO $ widgetQueueDraw drawingArea
    return True
 
@@ -375,6 +395,10 @@ getHandCardsXYForExplore hand explore width =
          (c, (xOffset * (i + 1 + (length hand)), if selected then 0 else pad))
    in  (mapI handPosition hand, mapI explorePosition explore)
 
+
+scaleCard :: Deck -> String -> Int -> Int -> IO Pixbuf
+scaleCard deck name width height = pixbufScaleSimple (lookupCardPixbuf deck name) (width `quot` 6) height InterpBilinear
+
 drawCurrentHandExplore :: GameGUI -> Deck -> IORef GUIState -> EventM EExpose Bool
 drawCurrentHandExplore gui deck stateRef = do
    let drawingArea = (getHand gui)
@@ -384,18 +408,17 @@ drawCurrentHandExplore gui deck stateRef = do
    gc         <- liftIO $ gcNew drawWindow
 
    let height  = currentCardHeight width
-       scaleCard name = pixbufScaleSimple (lookupCardPixbuf deck name) (width `quot` 6) height InterpBilinear
 
    let (hand, explore) = getHandCardsXYForExplore (currentHand state) (exploreCards state) width
    liftIO $ forM_ hand (\((HandCard name _), (destX, destY)) -> do
-        pixbuf <- scaleCard name
+        pixbuf <- scaleCard deck name width height
         drawPixbuf drawWindow gc
                    pixbuf
                    0 0                                -- srcx srcy
                    destX destY
                    (-1) (-1) RgbDitherNone 0 0)       -- dithering
    liftIO $ forM_ explore (\((HandCard name _), (destX, destY)) -> do
-        pixbuf <- scaleCard name
+        pixbuf <- scaleCard deck name width height
         drawPixbuf drawWindow gc
                    pixbuf
                    0 0                                -- srcx srcy
@@ -551,7 +574,7 @@ main = do
                   HandCard "space_marines.jpg" False]
        table = [TableauCard "old_earth.jpg" False True]
 
-   stateRef <- newIORef (GUIState cards [] Discard)
+   stateRef <- newIORef (GUIState cards [] Discard 0)
    widgetAddEvents (getHand gui) [PointerMotionMask, ButtonPressMask]
    on (getHand gui) exposeEvent (drawCurrentHand gui deck stateRef)
    on (getHand gui) motionNotifyEvent (motionInHand gui deck stateRef)
@@ -564,9 +587,28 @@ main = do
    onDestroy window mainQuit
    widgetShowAll window
    beginExplorePhase stateRef gui explore 0
+   beginDiscard stateRef gui 2
    mainGUI
 
+containerRemoveChildren container = do
+   toRemove <- containerGetChildren container
+   mapM_ (containerRemove container) toRemove
+
 -- Controller
+
+beginDiscard :: IORef GUIState -> GameGUI -> Int -> IO ()
+beginDiscard stateRef gui numDiscard = do
+   let contextBox = getContext gui
+   strikeThroughLabel (getExplore gui)
+   containerRemoveChildren contextBox
+   label <- discardLabel numDiscard
+   containerAdd contextBox label
+   widgetShowAll contextBox
+   modifyIORef stateRef (\state ->
+      state {
+          currentActivity = Discard
+         ,numDiscard = numDiscard
+      })
 
 beginExplorePhase :: IORef GUIState -> GameGUI -> Hand -> Int -> IO ()
 beginExplorePhase stateRef gui cards keepCount = do
@@ -576,4 +618,3 @@ beginExplorePhase stateRef gui cards keepCount = do
           exploreCards = cards
          ,currentActivity = Explore
       })
-   return ()
