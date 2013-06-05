@@ -179,9 +179,12 @@ phaseBox = do
    liftIO $ boxPackStart box produce PackGrow 0
    return box
 
-doneButton = buttonNewWithLabel "Done"
-discardText num = "Choose " ++ show num ++ " cards to discard"
+doneButton = do
+   button <- buttonNewWithLabel "Done"
+   widgetSetSensitive button False
+   return button
 
+discardText num = "Choose " ++ show num ++ " cards to discard"
 discardLabel num = labelNew (Just $ discardText num)
 
 contextBox = do
@@ -269,8 +272,9 @@ buttonPressedInHandDiscard gui deck stateRef = do
    liftIO $ when ((not . isNothing) ndx &&
                   clickType == SingleClick &&
                   button == LeftButton) $ do
-      putStrLn "In here"
-      writeIORef stateRef (state { currentHand = toggleCardAtIndex hand (fromJust ndx) })
+      let newHand = toggleCardAtIndex hand (fromJust ndx)
+      writeIORef stateRef (state { currentHand = newHand })
+      verifyNumberToDiscard gui newHand (numDiscard state)
       widgetQueueDraw drawingArea
    return True
 
@@ -287,7 +291,9 @@ buttonPressedInHandExplore gui deck stateRef = do
    liftIO $ when (clickType == SingleClick &&
                   button == LeftButton &&
                   (not . isNothing) expNdx) $ do
-      writeIORef stateRef (state { exploreCards = toggleCardAtIndex explore (fromJust expNdx) })
+      let newExplore = toggleCardAtIndex explore (fromJust expNdx)
+      writeIORef stateRef (state { exploreCards = newExplore })
+      verifyNumberToDiscard gui newExplore (numDiscard state)
       widgetQueueDraw drawingArea
    return True
 
@@ -385,6 +391,12 @@ drawCurrentHandDiscard gui deck stateRef = do
 
 mapI :: (a -> Int -> b) -> [a] -> [b]
 mapI f l = zipWith f l [0..length l]
+
+verifyNumberToDiscard :: GameGUI -> Hand -> Int -> IO ()
+verifyNumberToDiscard gui hand num = do
+   let numSelected = length (filter (\(HandCard _ selected) -> selected) hand)
+   widgetSetSensitive (getDone gui) (numSelected == num)
+   return ()
 
 getHandCardsXYForExplore :: Hand -> Hand -> Int -> ([(HandCard, (Int, Int))], [(HandCard, (Int, Int))])
 getHandCardsXYForExplore hand explore width =
@@ -586,8 +598,8 @@ main = do
 
    onDestroy window mainQuit
    widgetShowAll window
-   beginExplorePhase stateRef gui explore 0
-   beginDiscard stateRef gui 2
+   beginExplorePhase stateRef gui explore 2
+   {-beginDiscard stateRef gui 2-}
    mainGUI
 
 containerRemoveChildren container = do
@@ -612,9 +624,16 @@ beginDiscard stateRef gui numDiscard = do
 
 beginExplorePhase :: IORef GUIState -> GameGUI -> Hand -> Int -> IO ()
 beginExplorePhase stateRef gui cards keepCount = do
+   let contextBox = getContext gui
+       numDiscard = (length cards) - keepCount
    colorBoldLabel (getExplore gui) "blue"
+   containerRemoveChildren contextBox
+   label <- discardLabel numDiscard
+   containerAdd contextBox label
+   widgetShowAll contextBox
    modifyIORef stateRef (\state ->
       state { 
           exploreCards = cards
          ,currentActivity = Explore
+         ,numDiscard = numDiscard
       })
