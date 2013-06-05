@@ -21,7 +21,8 @@ import GameGUI
 type Deck = M.Map String Pixbuf
 
 type Name = String
-type Selected = Bool
+data Selected = Disabled | Selected | UnSelected
+   deriving (Eq)
 type HasGood = Bool
 data TableauCard = TableauCard Name Selected HasGood
 data HandCard = HandCard Name Selected
@@ -36,7 +37,6 @@ data Activity = Discard | Explore | Develop
 data GUIState = GUIState {
     currentHand :: Hand
    ,exploreCards :: Hand
-   ,developCards :: Hand
    ,currentActivity :: Activity
    ,numDiscard :: Int
 }
@@ -224,6 +224,9 @@ cardBack deck = lookupCardPixbuf deck "card_back.jpg"
 cardSelection :: Deck -> Pixbuf
 cardSelection deck = lookupCardPixbuf deck "card_selection.png"
 
+cardDisabled :: Deck -> Pixbuf
+cardDisabled deck = lookupCardPixbuf deck "card_disabled.png"
+
 setPixbuf :: Image -> Deck -> String -> IO ()
 setPixbuf image deck card = imageSetFromPixbuf image (lookupCardPixbuf deck card)
 
@@ -253,23 +256,38 @@ motionInTableau gui deck cards = do
       in setPixbuf (getCard gui) deck name
    return True
 
+isSelected :: Selected -> Bool
+isSelected Selected = True
+isSelected _ = False
+
+isDisabled :: Selected -> Bool
+isDisabled Disabled = True
+isDisabled _ = False
+
+toggleSelection :: Selected -> Selected
+toggleSelection Selected = UnSelected
+toggleSelection UnSelected = Selected
+toggleSelection a = a
+
 toggleCardAtIndex :: Hand -> Int -> Hand
 toggleCardAtIndex [] _        = undefined
-toggleCardAtIndex ((HandCard name selected):xs) 0 = HandCard name (not selected) : xs
+toggleCardAtIndex ((HandCard name selected):xs) 0 = HandCard name (toggleSelection selected) : xs
 toggleCardAtIndex (x:xs) ndx  = x : toggleCardAtIndex xs (ndx - 1)
 
 toggleExclusiveCardAtIndex :: Hand -> Int -> Hand
 toggleExclusiveCardAtIndex [] _        = []
 toggleExclusiveCardAtIndex ((HandCard name selected):xs) 0 =
-   HandCard name (not selected) : toggleExclusiveCardAtIndex xs (-1)
-toggleExclusiveCardAtIndex ((HandCard name _):xs) ndx =
-   HandCard name False : toggleExclusiveCardAtIndex xs (ndx - 1)
+   HandCard name (toggleSelection selected) : toggleExclusiveCardAtIndex xs (-1)
+toggleExclusiveCardAtIndex ((HandCard name Selected):xs) ndx =
+   HandCard name UnSelected : toggleExclusiveCardAtIndex xs (ndx - 1)
+toggleExclusiveCardAtIndex ((HandCard name selected):xs) ndx =
+   HandCard name selected : toggleExclusiveCardAtIndex xs (ndx - 1)
 
 getHandCardsXYForDiscard :: Hand -> Int -> [(HandCard, (Int, Int))]
 getHandCardsXYForDiscard hand width =
    let xOffset = xOffsetInHand width (length hand)
        pad = cardPadding (currentCardHeight width)
-       pos c@(HandCard _ selected) i = (c, (xOffset * i, if selected then 0 else pad))
+       pos c@(HandCard _ selected) i = (c, (xOffset * i, if isSelected selected then 0 else pad))
    in mapI pos hand
 
 getHandCardIndexFromXYDiscard :: Hand -> (Double, Double) -> (Int, Int) -> Maybe Int
@@ -343,7 +361,7 @@ getHandCardsXYForExplore hand explore width =
        pad = cardPadding (currentCardHeight width)
        handPosition c i = (c, (xOffset * i, pad))
        explorePosition c@(HandCard _ selected) i =
-         (c, (xOffset * (i + 1 + (length hand)), if selected then 0 else pad))
+         (c, (xOffset * (i + 1 + (length hand)), if isSelected selected then 0 else pad))
    in  (mapI handPosition hand, mapI explorePosition explore)
 
 getHandCardIndexFromXYExplore :: Hand -> Hand -> (Double, Double) -> (Int, Int) -> (Maybe Int, Maybe Int)
@@ -453,6 +471,7 @@ drawCurrentHandDevelop gui deck stateRef = do
        cards   = getPixbufsForHand deck hand
        xOffset = xOffsetInHand width (length hand)
    select <- liftIO $ pixbufScaleSimple (cardSelection deck) (width `quot` 6) height InterpBilinear
+   disable <- liftIO $ pixbufScaleSimple (cardDisabled deck) (width `quot` 6) height InterpBilinear
    liftIO$ forM_ (getHandCardsXYForDevelop hand width) (\((HandCard name selected), (destX, destY)) -> do
       pixbuf <- scaleCard deck name width height
       drawPixbuf drawWindow gc
@@ -460,9 +479,15 @@ drawCurrentHandDevelop gui deck stateRef = do
                  0 0                                -- srcx srcy
                  destX destY
                  (-1) (-1) RgbDitherNone 0 0        -- dithering
-      when selected $
+      when (isSelected selected) $
          drawPixbuf drawWindow gc
                     select
+                    0 0                          -- srcx srcy
+                    destX destY
+                    (-1) (-1) RgbDitherNone 0 0  -- dithering
+      when (isDisabled selected) $
+         drawPixbuf drawWindow gc
+                    disable
                     0 0                          -- srcx srcy
                     destX destY
                     (-1) (-1) RgbDitherNone 0 0) -- dithering
@@ -508,13 +533,13 @@ mapI f l = zipWith f l [0..length l]
 
 verifyNumberToDevelop :: GameGUI -> Hand -> IO ()
 verifyNumberToDevelop gui hand = do
-   let numSelected = length (filter (\(HandCard _ selected) -> selected) hand)
+   let numSelected = length (filter (\(HandCard _ selected) -> isSelected selected) hand)
    widgetSetSensitive (getDone gui) (numSelected `elem` [0, 1])
    return ()
 
 verifyNumberToDiscard :: GameGUI -> Hand -> Int -> IO ()
 verifyNumberToDiscard gui hand num = do
-   let numSelected = length (filter (\(HandCard _ selected) -> selected) hand)
+   let numSelected = length (filter (\(HandCard _ selected) -> isSelected selected) hand)
    widgetSetSensitive (getDone gui) (numSelected == num)
    return ()
 
@@ -650,18 +675,18 @@ main = do
    deck <- loadCardPixbufs
    (window, gui) <- runStateT gameWindow emptyGameGUI
 
-   let cards = [HandCard "old_earth.jpg" False,
-                HandCard "alien_uplift_center.jpg" False,
-                HandCard "blaster_gem_mines.jpg" False,
-                HandCard "blaster_gem_mines.jpg" False,
-                HandCard "deserted_alien_world.jpg" False,
-                HandCard "free_trade_association.jpg" False]
-       explore = [HandCard "the_last_of_the_uplift_gnarssh.jpg" False,
-                  HandCard "space_marines.jpg" False,
-                  HandCard "space_marines.jpg" False]
-       table = [TableauCard "old_earth.jpg" False True]
+   let cards = [HandCard "old_earth.jpg" UnSelected,
+                HandCard "alien_uplift_center.jpg" UnSelected,
+                HandCard "blaster_gem_mines.jpg" UnSelected,
+                HandCard "blaster_gem_mines.jpg" UnSelected,
+                HandCard "deserted_alien_world.jpg" UnSelected,
+                HandCard "free_trade_association.jpg" UnSelected]
+       explore = [HandCard "the_last_of_the_uplift_gnarssh.jpg" UnSelected,
+                  HandCard "space_marines.jpg" UnSelected,
+                  HandCard "space_marines.jpg" UnSelected]
+       table = [TableauCard "old_earth.jpg" UnSelected True]
 
-   stateRef <- newIORef (GUIState cards [] [] Discard 0)
+   stateRef <- newIORef (GUIState cards [] Discard 0)
    widgetAddEvents (getHand gui) [PointerMotionMask, ButtonPressMask]
    on (getHand gui) exposeEvent (drawCurrentHand gui deck stateRef)
    on (getHand gui) motionNotifyEvent (motionInHand gui deck stateRef)
@@ -675,7 +700,9 @@ main = do
    widgetShowAll window
    beginExplorePhase stateRef gui explore 2
    beginDiscard stateRef gui 2
-   beginDevelopPhase stateRef gui []
+   beginDevelopPhase stateRef gui [
+                HandCard "alien_uplift_center.jpg" UnSelected,
+                HandCard "blaster_gem_mines.jpg" UnSelected]
    mainGUI
 
 drawCurrentHand :: GameGUI -> Deck -> IORef GUIState -> EventM EExpose Bool
@@ -738,6 +765,13 @@ beginExplorePhase stateRef gui cards keepCount = do
          ,numDiscard = numDiscard
       })
 
+enableAndDisableCards :: Hand -> Hand -> Hand
+enableAndDisableCards hand enableCards = map enableOrDisableCard hand
+   where enableOrDisableCard card@(HandCard name selected) =
+            if card `elem` enableCards
+            then HandCard name UnSelected
+            else HandCard name Disabled
+
 beginDevelopPhase :: IORef GUIState -> GameGUI -> Hand -> IO ()
 beginDevelopPhase stateRef gui developCards = do
    let contextBox = getContext gui
@@ -750,5 +784,5 @@ beginDevelopPhase stateRef gui developCards = do
    modifyIORef stateRef (\state ->
       state { 
           currentActivity = Develop
-         ,developCards = developCards
+         ,currentHand = (enableAndDisableCards (currentHand state) developCards)
       })
