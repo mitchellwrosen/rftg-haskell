@@ -463,9 +463,9 @@ drawCurrentHandDevelop gui deck stateRef = do
       when selected $
          drawPixbuf drawWindow gc
                     select
-                    0 0                                -- srcx srcy
+                    0 0                          -- srcx srcy
                     destX destY
-                    (-1) (-1) RgbDitherNone 0 0)       -- dithering
+                    (-1) (-1) RgbDitherNone 0 0) -- dithering
    liftIO $ widgetQueueDraw drawingArea
    return True
 
@@ -741,12 +741,12 @@ beginExplorePhase stateRef gui cards keepCount = do
 beginDevelopPhase :: IORef GUIState -> GameGUI -> Hand -> IO ()
 beginDevelopPhase stateRef gui developCards = do
    let contextBox = getContext gui
-   colorBoldLabel (getExplore gui) "blue"
+   colorBoldLabel (getDevelop gui) "blue"
    containerRemoveChildren contextBox
    label <- developContextLabel
    containerAdd contextBox label
-   widgetSetSensitive (getDone gui) True
    widgetShowAll contextBox
+   widgetSetSensitive (getDone gui) True
    modifyIORef stateRef (\state ->
       state { 
           currentActivity = Develop
