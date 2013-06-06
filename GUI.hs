@@ -26,14 +26,16 @@ data Selected = Disabled | Selected | UnSelected
 type HasGood = Bool
 data TableauCard = TableauCard Name Selected HasGood
 data HandCard = HandCard Name Selected
-   deriving (Eq)
+
+instance Eq HandCard where
+   (HandCard a _) == (HandCard b _) = a == b
 
 type Hand = [HandCard]
 type Tableau = [TableauCard]
 
 type StateIO a = StateT GameGUI IO a
 
-data Activity = Discard | Explore | Develop
+data Activity = Discard | Explore | Develop | Settle
 data GUIState = GUIState {
     currentHand :: Hand
    ,exploreCards :: Hand
@@ -189,6 +191,7 @@ discardText num = "Choose " ++ show num ++ " cards to discard"
 discardContextLabel num = labelNew (Just $ discardText num)
 
 developContextLabel = labelNew (Just $ "Choose 1 card to develop")
+settleContextLabel = labelNew (Just $ "Choose 1 card to settle")
 
 contextBox = do
    box <- hBoxNew False 0
@@ -525,6 +528,15 @@ buttonPressedInHandDevelop gui deck stateRef = do
       widgetQueueDraw drawingArea
    return True
 
+drawCurrentHandSettle :: GameGUI -> Deck -> IORef GUIState -> EventM EExpose Bool
+drawCurrentHandSettle = drawCurrentHandDevelop
+
+motionInHandSettle :: GameGUI -> Deck -> IORef GUIState -> EventM EMotion Bool
+motionInHandSettle = motionInHandDevelop
+
+buttonPressedInHandSettle :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
+buttonPressedInHandSettle = buttonPressedInHandDevelop
+
 xOffsetInHand :: Int -> Int -> Int
 xOffsetInHand width numCards = min (width `quot` 6) (width `quot` numCards)
 
@@ -703,6 +715,9 @@ main = do
    beginDevelopPhase stateRef gui [
                 HandCard "alien_uplift_center.jpg" UnSelected,
                 HandCard "blaster_gem_mines.jpg" UnSelected]
+   beginSettlePhase stateRef gui [
+                HandCard "deserted_alien_world.jpg" UnSelected,
+                HandCard "old_earth.jpg" UnSelected]
    mainGUI
 
 drawCurrentHand :: GameGUI -> Deck -> IORef GUIState -> EventM EExpose Bool
@@ -712,6 +727,7 @@ drawCurrentHand gui deck stateRef = do
       Discard -> drawCurrentHandDiscard gui deck stateRef
       Explore -> drawCurrentHandExplore gui deck stateRef
       Develop -> drawCurrentHandDevelop gui deck stateRef
+      Settle -> drawCurrentHandSettle gui deck stateRef
 
 motionInHand :: GameGUI -> Deck -> IORef GUIState -> EventM EMotion Bool
 motionInHand gui deck stateRef = do
@@ -720,6 +736,7 @@ motionInHand gui deck stateRef = do
       Discard -> motionInHandDiscard gui deck stateRef
       Explore -> motionInHandExplore gui deck stateRef
       Develop -> motionInHandDevelop gui deck stateRef
+      Settle -> motionInHandSettle gui deck stateRef
 
 buttonPressedInHand :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
 buttonPressedInHand gui deck stateRef = do
@@ -728,6 +745,7 @@ buttonPressedInHand gui deck stateRef = do
       Discard -> buttonPressedInHandDiscard gui deck stateRef
       Explore -> buttonPressedInHandExplore gui deck stateRef
       Develop -> buttonPressedInHandDevelop gui deck stateRef
+      Settle -> buttonPressedInHandSettle gui deck stateRef
 
 containerRemoveChildren container = do
    toRemove <- containerGetChildren container
@@ -785,4 +803,19 @@ beginDevelopPhase stateRef gui developCards = do
       state { 
           currentActivity = Develop
          ,currentHand = (enableAndDisableCards (currentHand state) developCards)
+      })
+
+beginSettlePhase :: IORef GUIState -> GameGUI -> Hand -> IO ()
+beginSettlePhase stateRef gui settleCards = do
+   let contextBox = getContext gui
+   colorBoldLabel (getSettle gui) "blue"
+   containerRemoveChildren contextBox
+   label <- settleContextLabel
+   containerAdd contextBox label
+   widgetShowAll contextBox
+   widgetSetSensitive (getDone gui) True
+   modifyIORef stateRef (\state ->
+      state { 
+          currentActivity = Settle
+         ,currentHand = (enableAndDisableCards (currentHand state) settleCards)
       })
