@@ -39,7 +39,7 @@ type Tableau = [TableauCard]
 
 type StateIO a = StateT GameGUI IO a
 
-data Activity = Discard | Explore | Develop | Settle | ChooseConsumePower | ChooseGood
+data Activity = Discard | Explore | Develop | Settle | ChooseConsumePower | ChooseGood | Produce
 data GUIState = GUIState {
     currentHand :: Hand
    ,exploreCards :: Hand
@@ -199,6 +199,7 @@ developContextLabel = labelNew (Just $ "Choose 1 card to develop")
 settleContextLabel = labelNew (Just $ "Choose 1 card to settle")
 chooseConsumePowerContextLabel = labelNew (Just $ "Choose a consume power")
 chooseGoodContextLabel cardName = labelNew (Just $ "Choose a good for " ++ cardName)
+produceContextLabel = labelNew (Just $ "Choose a windfall to produce on")
 
 contextBox = do
    box <- hBoxNew False 0
@@ -230,9 +231,6 @@ lookupCardPixbuf m card = fromJust $ M.lookup card m
 
 cardBack :: Deck -> Pixbuf
 cardBack deck = lookupCardPixbuf deck "card_back.jpg"
-
-cardSelection :: Deck -> Pixbuf
-cardSelection deck = lookupCardPixbuf deck "card_selection.png"
 
 cardDisabled :: Deck -> Pixbuf
 cardDisabled deck = lookupCardPixbuf deck "card_disabled.png"
@@ -280,6 +278,8 @@ drawCurrentTableau stateRef gui deck = do
        cards = getTableauCardsXY tableau size
    cardBackPixbuf <- liftIO $
          pixbufScaleSimple (cardBack deck) (width `quot` 8) (cardHeight * 3 `quot` 4) InterpBilinear
+   selectPixbuf <- liftIO $ scaleCard deck "card_selection.png" width cardHeight
+   disabledPixbuf <- liftIO $ scaleCard deck "card_disabled.png" width cardHeight
    liftIO $ forM_ cards (\((TableauCard name selected hasGood), (destX, destY)) -> do
       pixbuf <- scaleCard deck name width cardHeight
       drawPixbuf drawWindow gc
@@ -289,12 +289,22 @@ drawCurrentTableau stateRef gui deck = do
                  (-1) (-1) RgbDitherNone 0 0        -- dithering
       when hasGood $
          let goodX = destX + width `quot` 24
-             goodY = if isSelected selected
-                     then destY
-                     else destY + cardHeight `quot` 4
+             goodY = destY + cardHeight `quot` 4
          in drawPixbuf drawWindow gc cardBackPixbuf 0 0
                        goodX goodY
-                       (-1) (-1) RgbDitherNone 0 0)
+                       (-1) (-1) RgbDitherNone 0 0
+      when (isSelected selected) $
+         drawPixbuf drawWindow gc
+                    selectPixbuf
+                    0 0                                -- srcx srcy
+                    destX destY
+                    (-1) (-1) RgbDitherNone 0 0        -- dithering
+      when (isDisabled selected) $
+         drawPixbuf drawWindow gc
+                    disabledPixbuf
+                    0 0                                -- srcx srcy
+                    destX destY
+                    (-1) (-1) RgbDitherNone 0 0)       -- dithering
    liftIO $ widgetQueueDraw drawingArea
    return True
 
@@ -314,8 +324,27 @@ verifyNumberToConsume gui tableau num =
    let numSelected = length (filter (\(TableauCard _ selected _) -> isSelected selected) tableau)
    in widgetSetSensitive (getDone gui) (numSelected == num)
 
-buttonPressedInTableau :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
-buttonPressedInTableau gui deck stateRef = do
+buttonPressedInTableauChooseGood :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
+buttonPressedInTableauChooseGood gui deck stateRef = do
+   state <- liftIO $ readIORef stateRef
+   let drawingArea = getPlayerTableau gui
+       tableau = currentTableau state
+   size <- liftIO $ widgetGetSize drawingArea
+   clickType <- eventClick
+   button <- eventButton
+   pos <- eventCoordinates
+   let ndx = getTableauCardIndexFromXY tableau pos size
+   liftIO $ when ((not . isNothing) ndx &&
+                  clickType == SingleClick &&
+                  button == LeftButton) $ do
+      let newTableau = toggleTableauCardAtIndex tableau (fromJust ndx)
+      writeIORef stateRef (state { currentTableau = newTableau })
+      verifyNumberToConsume gui newTableau (numDiscard state)
+      widgetQueueDraw drawingArea
+   return True
+
+buttonPressedInTableauProduce :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
+buttonPressedInTableauProduce gui deck stateRef = do
    state <- liftIO $ readIORef stateRef
    let drawingArea = getPlayerTableau gui
        tableau = currentTableau state
@@ -398,13 +427,19 @@ drawCurrentHandDiscard gui deck stateRef = do
        height  = currentCardHeight width
        cards   = getPixbufsForHand deck hand
        xOffset = xOffsetInHand width (length hand)
-   liftIO$ forM_ (getHandCardsXYForDiscard hand width) (\((HandCard name _), (destX, destY)) -> do
+   discardedPixbuf <- liftIO $ scaleCard deck "card_discarded.png" width height
+   liftIO$ forM_ (getHandCardsXYForDiscard hand width) (\((HandCard name selected), (destX, destY)) -> do
       pixbuf <- scaleCard deck name width height
       drawPixbuf drawWindow gc
                  pixbuf
                  0 0                                -- srcx srcy
                  destX destY
-                 (-1) (-1) RgbDitherNone 0 0)       -- dithering
+                 (-1) (-1) RgbDitherNone 0 0        -- dithering
+      when (isSelected selected) $ drawPixbuf drawWindow gc
+                                 discardedPixbuf
+                                 0 0
+                                 destX destY
+                                 (-1) (-1) RgbDitherNone 0 0)       -- dithering
    liftIO $ widgetQueueDraw drawingArea
    return True
 
@@ -471,20 +506,34 @@ drawCurrentHandExplore gui deck stateRef = do
    gc         <- liftIO $ gcNew drawWindow
    let height  = currentCardHeight width
    let (hand, explore) = getHandCardsXYForExplore (currentHand state) (exploreCards state) width
+   disabledPixbuf <- liftIO $ scaleCard deck "card_disabled.png" width height
    liftIO $ forM_ hand (\((HandCard name _), (destX, destY)) -> do
         pixbuf <- scaleCard deck name width height
         drawPixbuf drawWindow gc
                    pixbuf
                    0 0                                -- srcx srcy
                    destX destY
+                   (-1) (-1) RgbDitherNone 0 0        -- dithering
+        drawPixbuf drawWindow gc
+                   disabledPixbuf
+                   0 0                                -- srcx srcy
+                   destX destY
                    (-1) (-1) RgbDitherNone 0 0)       -- dithering
-   liftIO $ forM_ explore (\((HandCard name _), (destX, destY)) -> do
+
+   discardedPixbuf <- liftIO $ scaleCard deck "card_discarded.png" width height
+   liftIO $ forM_ explore (\((HandCard name selected), (destX, destY)) -> do
         pixbuf <- scaleCard deck name width height
         drawPixbuf drawWindow gc
                    pixbuf
                    0 0                                -- srcx srcy
                    destX destY
-                   (-1) (-1) RgbDitherNone 0 0)       -- dithering
+                   (-1) (-1) RgbDitherNone 0 0        -- dithering
+        when (isSelected selected) $ 
+           drawPixbuf drawWindow gc
+                      discardedPixbuf
+                      0 0                                -- srcx srcy
+                      destX destY
+                      (-1) (-1) RgbDitherNone 0 0)       -- dithering
 
    liftIO $ widgetQueueDraw drawingArea
    return True
@@ -554,8 +603,8 @@ drawCurrentHandDevelop gui deck stateRef = do
        height  = currentCardHeight width
        cards   = getPixbufsForHand deck hand
        xOffset = xOffsetInHand width (length hand)
-   select <- liftIO $ pixbufScaleSimple (cardSelection deck) (width `quot` 6) height InterpBilinear
-   disable <- liftIO $ pixbufScaleSimple (cardDisabled deck) (width `quot` 6) height InterpBilinear
+   selectPixbuf <- liftIO $ scaleCard deck "card_selection.png" width height
+   disablePixbuf <- liftIO $ scaleCard deck "card_disabled.png" width height
    liftIO$ forM_ (getHandCardsXYForDevelop hand width) (\((HandCard name selected), (destX, destY)) -> do
       pixbuf <- scaleCard deck name width height
       drawPixbuf drawWindow gc
@@ -565,13 +614,13 @@ drawCurrentHandDevelop gui deck stateRef = do
                  (-1) (-1) RgbDitherNone 0 0        -- dithering
       when (isSelected selected) $
          drawPixbuf drawWindow gc
-                    select
+                    selectPixbuf
                     0 0                          -- srcx srcy
                     destX destY
                     (-1) (-1) RgbDitherNone 0 0  -- dithering
       when (isDisabled selected) $
          drawPixbuf drawWindow gc
-                    disable
+                    disablePixbuf
                     0 0                          -- srcx srcy
                     destX destY
                     (-1) (-1) RgbDitherNone 0 0) -- dithering
@@ -630,11 +679,20 @@ buttonPressedInHandChooseConsume _ _ _ = return True
 drawCurrentHandChooseGood :: GameGUI -> Deck -> IORef GUIState -> EventM EExpose Bool
 drawCurrentHandChooseGood = drawCurrentHandDevelop
 
+drawCurrentHandProduce :: GameGUI -> Deck -> IORef GUIState -> EventM EExpose Bool
+drawCurrentHandProduce = drawCurrentHandDevelop
+
 motionInHandChooseGood :: GameGUI -> Deck -> IORef GUIState -> EventM EMotion Bool
 motionInHandChooseGood = motionInHandDevelop
 
+motionInHandProduce :: GameGUI -> Deck -> IORef GUIState -> EventM EMotion Bool
+motionInHandProduce = motionInHandDevelop
+
 buttonPressedInHandChooseGood :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
 buttonPressedInHandChooseGood _ _ _ = return True
+
+buttonPressedInHandProduce :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
+buttonPressedInHandProduce _ _ _ = return True
 
 xOffsetInHand :: Int -> Int -> Int
 xOffsetInHand width numCards = min (width `quot` 6) (width `quot` numCards)
@@ -768,7 +826,9 @@ main = do
        explore = [HandCard "the_last_of_the_uplift_gnarssh.jpg" UnSelected,
                   HandCard "space_marines.jpg" UnSelected,
                   HandCard "space_marines.jpg" UnSelected]
-       table = [TableauCard "old_earth.jpg" UnSelected True]
+       table = [TableauCard "old_earth.jpg" UnSelected True
+                ,TableauCard "alien_uplift_center.jpg" UnSelected True
+                ,TableauCard "alien_uplift_center.jpg" UnSelected False]
 
    stateRef <- newIORef (GUIState cards [] table Discard 0)
    widgetAddEvents (getHand gui) [PointerMotionMask, ButtonPressMask]
@@ -783,17 +843,26 @@ main = do
 
    onDestroy window mainQuit
    widgetShowAll window
-   beginExplorePhase stateRef gui explore 2
-   beginDiscard stateRef gui 2
    beginDevelopPhase stateRef gui [
                 HandCard "alien_uplift_center.jpg" UnSelected,
                 HandCard "blaster_gem_mines.jpg" UnSelected]
    beginSettlePhase stateRef gui [
                 HandCard "deserted_alien_world.jpg" UnSelected,
                 HandCard "old_earth.jpg" UnSelected]
-   beginChooseConsumePowerPower stateRef gui []
+   beginChooseConsumePower stateRef gui []
+   beginDiscard stateRef gui 2
+   beginExplorePhase stateRef gui explore 2
    beginChooseGood stateRef gui [TableauCard "old_earth.jpg" UnSelected True] 1 "Old Earth"
+   beginProducePhase stateRef gui [TableauCard "alien_uplift_center.jpg" UnSelected False] 1
    mainGUI
+
+buttonPressedInTableau :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
+buttonPressedInTableau gui deck stateRef = do
+   state <- liftIO $ readIORef stateRef
+   case currentActivity state of
+      ChooseGood -> buttonPressedInTableauChooseGood gui deck stateRef
+      Produce -> buttonPressedInTableauProduce gui deck stateRef
+      _ -> return True
 
 drawCurrentHand :: GameGUI -> Deck -> IORef GUIState -> EventM EExpose Bool
 drawCurrentHand gui deck stateRef = do
@@ -805,6 +874,7 @@ drawCurrentHand gui deck stateRef = do
       Settle -> drawCurrentHandSettle gui deck stateRef
       ChooseConsumePower -> drawCurrentHandChooseConsume gui deck stateRef
       ChooseGood -> drawCurrentHandChooseGood gui deck stateRef
+      Produce -> drawCurrentHandProduce gui deck stateRef
 
 motionInHand :: GameGUI -> Deck -> IORef GUIState -> EventM EMotion Bool
 motionInHand gui deck stateRef = do
@@ -816,6 +886,7 @@ motionInHand gui deck stateRef = do
       Settle  -> motionInHandSettle gui deck stateRef
       ChooseConsumePower -> motionInHandChooseConsume gui deck stateRef
       ChooseGood -> motionInHandChooseGood gui deck stateRef
+      Produce -> motionInHandProduce gui deck stateRef
 
 buttonPressedInHand :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
 buttonPressedInHand gui deck stateRef = do
@@ -827,6 +898,7 @@ buttonPressedInHand gui deck stateRef = do
       Settle -> buttonPressedInHandSettle gui deck stateRef
       ChooseConsumePower -> buttonPressedInHandChooseConsume gui deck stateRef
       ChooseGood -> buttonPressedInHandChooseGood gui deck stateRef
+      Produce -> buttonPressedInHandProduce gui deck stateRef
 
 containerRemoveChildren container = do
    toRemove <- containerGetChildren container
@@ -912,8 +984,23 @@ beginSettlePhase stateRef gui settleCards = do
          ,currentHand = (enableAndDisableCards (currentHand state) settleCards)
       })
 
-beginChooseConsumePowerPower :: IORef GUIState -> GameGUI -> [String] -> IO ()
-beginChooseConsumePowerPower stateRef gui consumePowers = do
+beginProducePhase :: IORef GUIState -> GameGUI -> Tableau -> Int -> IO ()
+beginProducePhase stateRef gui eligibleCards numGoods = do
+   let contextBox = getContext gui
+   colorBoldLabel (getProduce gui) "blue"
+   containerRemoveChildren contextBox
+   label <- produceContextLabel
+   containerAdd contextBox label
+   widgetShowAll contextBox
+   widgetSetSensitive (getDone gui) False
+   modifyIORef stateRef (\state ->
+      state {
+          currentActivity = Produce
+         ,currentTableau = (enableAndDisableTableauCards (currentTableau state) eligibleCards)
+      })
+
+beginChooseConsumePower :: IORef GUIState -> GameGUI -> [String] -> IO ()
+beginChooseConsumePower stateRef gui consumePowers = do
    let contextBox = getContext gui
    colorBoldLabel (getConsume gui) "blue"
    containerRemoveChildren contextBox
@@ -924,9 +1011,8 @@ beginChooseConsumePowerPower stateRef gui consumePowers = do
    widgetShowAll contextBox
    widgetSetSensitive (getDone gui) True
    modifyIORef stateRef (\state ->
-      state { 
+      state {
           currentActivity = ChooseConsumePower
-         ,currentHand = (enableAllCards (currentHand state))
       })
 
 beginChooseGood :: IORef GUIState -> GameGUI -> Tableau -> Int -> String -> IO ()
