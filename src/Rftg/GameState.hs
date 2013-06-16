@@ -3,12 +3,13 @@
 module Rftg.GameState where
 
 import Rftg.Card
+import Rftg.CardJSON
 import Rftg.Goal
 import Rftg.Phase
 import Rftg.Player
 
-import Control.Lens (makeLenses)
-import Data.Label (get)
+import Control.Lens.Getter ((^.))
+import Control.Lens.TH (makeLenses)
 import System.Random.Shuffle (shuffleM)
 
 
@@ -82,7 +83,7 @@ getDeck settings =
                return $ removeGamblingWorld deck ++ rvi -- FIXME: does this `remove` belong?
             else return deck
 
-         removeGamblingWorld = filter ((/= "Gambling World") . get cName)
+         removeGamblingWorld = filter ((/= "Gambling World") . (^. cName))
 
 -- Gets (first, most) goals from the available pool.
 getGoals :: GameSettings -> IO ([Goal], [Goal])
