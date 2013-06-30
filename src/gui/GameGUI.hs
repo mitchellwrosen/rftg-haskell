@@ -1,23 +1,25 @@
 module GameGUI (
                 GameGUI(..)
+               ,GamePlayGUI(..)
+               ,InfoGUI(..)
                ,Selected(..)
-               ,HasGood(..)
+               ,HasGood
                ,TableauCard(..)
                ,HandCard(..)
-               ,Hand(..)
-               ,Tableau(..)
+               ,Hand
+               ,Tableau
                ,Activity(..)
                ,GUIState(..)
                ) where
 
-import Data.Maybe
 import Graphics.UI.Gtk
-import Data.IORef
+import Data.IORef (IORef)
 
 type Name = String
+type HasGood = Bool
+
 data Selected = Disabled | Selected | UnSelected
    deriving (Eq, Show, Read)
-type HasGood = Bool
 data TableauCard = TableauCard Name Selected HasGood
    deriving (Show, Read)
 data HandCard = HandCard Name Selected
@@ -33,29 +35,38 @@ type Hand = [HandCard]
 type Tableau = [TableauCard]
 
 data Activity = Discard | Explore | Develop | Settle | ChooseConsumePower | ChooseGood | Produce
-data GUIState = GUIState {
-    currentHand :: Hand
-   ,exploreCards :: Hand
-   ,currentTableau :: Tableau
-   ,currentActivity :: Activity
-   ,numDiscard :: Int
-   ,consumePowers :: Maybe ComboBox
+
+data InfoGUI = InfoGUI {
+    getCard            :: Image
+   ,getDrawDiscardPool :: Label
+   ,getPlayHistory     :: TextView
+}
+
+data GamePlayGUI = GamePlayGUI {
+    getOpponents     :: HBox
+   ,getPlayerTableau :: DrawingArea
+   ,getExplore       :: Label
+   ,getDevelop       :: Label
+   ,getSettle        :: Label
+   ,getConsume       :: Label
+   ,getProduce       :: Label
+   ,getDone          :: Button
+   ,getContext       :: HBox
+   ,getHand          :: DrawingArea
 }
 
 data GameGUI = GameGUI {
-    getMenu ::  MenuBar
-   ,getCard ::  Image
-   ,getDrawDiscardPool ::  Label
-   ,getPlayHistory     ::  TextView
-   ,getExplore ::  Label
-   ,getDevelop ::  Label
-   ,getSettle  ::  Label
-   ,getConsume ::  Label
-   ,getProduce ::  Label
-   ,getDone    ::  Button
-   ,getContext ::  HBox
-   ,getHand    ::  DrawingArea
-   ,getOpponents ::  HBox
-   ,getPlayerTableau ::  DrawingArea
-   ,getGUIState ::  (IORef GUIState)
+    getMenu        :: MenuBar
+   ,getInfoGUI     :: InfoGUI
+   ,getGamePlayGUI :: GamePlayGUI
+   ,getGUIState    :: IORef GUIState
+}
+
+data GUIState = GUIState {
+    currentHand     :: Hand
+   ,exploreCards    :: Hand
+   ,currentTableau  :: Tableau
+   ,currentActivity :: Activity
+   ,numDiscard      :: Int
+   ,consumePowers   :: ComboBox
 }
