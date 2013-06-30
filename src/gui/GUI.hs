@@ -39,10 +39,9 @@ drawDiscardPoolText :: Int -> Int -> Int -> String
 drawDiscardPoolText = printf "Draw: %d Discard: %d Pool: %d"
 
 cardImageDims = (372, 520)
-cardImage :: StateIO Image
+cardImage :: IO Image
 cardImage = do
    image <- liftIO $ imageNewFromFile "images/cards/card_back.jpg"
-   modify (setCard image)
    return image
 
 currentCardHeight :: Int -> Int
@@ -52,38 +51,32 @@ currentCardHeight width =
        height = fromIntegral . round $ (fromIntegral width / 6.0) * ratio
    in height
 
-drawDiscardPoolLabel :: StateIO Label
-drawDiscardPoolLabel = do
-   label <- liftIO $ labelNew (Just $ drawDiscardPoolText 100 0 48)
-   modify (setDrawDiscardPool label)
-   return label
+drawDiscardPoolLabel :: IO Label
+drawDiscardPoolLabel = labelNew (Just $ drawDiscardPoolText 100 0 48)
 
-playHistoryTextView :: StateIO TextView
+playHistoryTextView :: IO TextView
 playHistoryTextView = do
    view <- liftIO textViewNew
-   liftIO $ textViewSetEditable view False
-   liftIO $ textViewSetCursorVisible view False
-   modify (setPlayHistory view)
+   textViewSetEditable view False
+   textViewSetCursorVisible view False
    return view
 
-infoBox :: StateIO VBox
+infoBox :: IO (VBox, Image, Label, TextView)
 infoBox = do
-   box             <- liftIO $ vBoxNew False 0
+   box             <- vBoxNew False 0
    card            <- cardImage
    drawDiscardPool <- drawDiscardPoolLabel
    playHistory     <- playHistoryTextView
+   boxPackStart box card            PackNatural 0
+   boxPackStart box drawDiscardPool PackNatural 0
+   boxPackStart box playHistory     PackGrow 0
+   return (box, card, drawDiscardPool, playHistory)
 
-   liftIO $ boxPackStart box card            PackNatural 0
-   liftIO $ boxPackStart box drawDiscardPool PackNatural 0
-   liftIO $ boxPackStart box playHistory     PackGrow 0
-   return box
-
-opponentsBox :: StateIO HBox
+opponentsBox :: IO HBox
 opponentsBox = do
-   box  <- liftIO $ hBoxNew False 0
-   (opp1, _) <- liftIO $ tableauBox colorRed
-   modify (setOpponents box)
-   liftIO $ boxPackStart box opp1 PackGrow 0
+   box       <- hBoxNew False 0
+   (opp1, _) <- tableauBox colorRed
+   boxPackStart box opp1 PackGrow 0
    return box
 
 phaseIconImage    = imageNewFromPixbuf =<< pixbufNewFromFileAtSize "./images/no_phase_icon.png" 32 32
@@ -109,17 +102,16 @@ playerStatusBox = do
    boxPackStart box empty2       PackGrow    0
    return box
 
-tableausBox :: StateIO VBox
+tableausBox :: IO (VBox, HBox, DrawingArea)
 tableausBox = do
-   box       <- liftIO $ vBoxNew False 0
+   box       <- vBoxNew False 0
    opponents <- opponentsBox
-   sep       <- liftIO hSeparatorNew
-   (player, tableau) <- liftIO $ tableauBox colorBlue
-   modify (setPlayerTableau tableau)
+   sep       <- hSeparatorNew
+   (player, tableau) <- tableauBox colorBlue
    liftIO $ boxPackStart box opponents PackGrow    0
    liftIO $ boxPackStart box sep       PackNatural 0
    liftIO $ boxPackStart box player    PackGrow    0
-   return box
+   return (box, opponents, tableau)
 
 tableauBox :: Color -> IO (VBox, DrawingArea)
 tableauBox color = do
@@ -154,25 +146,21 @@ settleLabel  = labelNew (Just "Settle")  >>= strikeThroughLabel
 consumeLabel = labelNew (Just "Consume") >>= strikeThroughLabel
 produceLabel = labelNew (Just "Produce") >>= strikeThroughLabel
 
-phaseBox :: StateIO HBox
+-- TODO: Change this up to use phases Show to make a Map
+phaseBox :: IO (HBox, [Label])
 phaseBox = do
-   box     <- liftIO $ hBoxNew False 0
-   explore <- liftIO exploreLabel
-   develop <- liftIO developLabel
-   settle  <- liftIO settleLabel
-   consume <- liftIO consumeLabel
-   produce <- liftIO produceLabel
-   modify $ (setExplore explore) .
-            (setDevelop develop) .
-            (setSettle  settle)  .
-            (setConsume consume) .
-            (setProduce produce)
-   liftIO $ boxPackStart box explore PackGrow 0
-   liftIO $ boxPackStart box develop PackGrow 0
-   liftIO $ boxPackStart box settle  PackGrow 0
-   liftIO $ boxPackStart box consume PackGrow 0
-   liftIO $ boxPackStart box produce PackGrow 0
-   return box
+   box     <- hBoxNew False 0
+   explore <- exploreLabel
+   develop <- developLabel
+   settle  <- settleLabel
+   consume <- consumeLabel
+   produce <- produceLabel
+   boxPackStart box explore PackGrow 0
+   boxPackStart box develop PackGrow 0
+   boxPackStart box settle  PackGrow 0
+   boxPackStart box consume PackGrow 0
+   boxPackStart box produce PackGrow 0
+   return (box, [explore, develop, settle, consume, produce])
 
 doneButton = do
    button <- buttonNewWithLabel "Done"
@@ -188,21 +176,20 @@ chooseConsumePowerContextLabel = labelNew (Just $ "Choose a consume power")
 chooseGoodContextLabel cardName = labelNew (Just $ "Choose a good for " ++ cardName)
 produceContextLabel = labelNew (Just $ "Choose a windfall to produce on")
 
+contextBox :: IO HBox
 contextBox = do
    box <- hBoxNew False 0
    context <- discardContextLabel 2
    boxPackStart box context PackGrow 0
    return box
 
-actionBox :: StateIO HBox
 actionBox = do
-   box  <- liftIO $ hBoxNew False 0
-   done <- liftIO doneButton
-   context <- liftIO contextBox
-   modify $ (setDone done) . (setContext context)
-   liftIO $ boxPackStart box context PackGrow    0
-   liftIO $ boxPackStart box done    PackNatural 0
-   return box
+   box  <- hBoxNew False 0
+   done <- doneButton
+   context <- contextBox
+   boxPackStart box context PackGrow    0
+   boxPackStart box done    PackNatural 0
+   return (box, done, context)
 
 cardPadding :: Int -> Int
 cardPadding height = height `quot` 10
@@ -516,7 +503,7 @@ drawCurrentHandExplore gui deck stateRef = do
                    0 0                                -- srcx srcy
                    destX destY
                    (-1) (-1) RgbDitherNone 0 0        -- dithering
-        when (isSelected selected) $ 
+        when (isSelected selected) $
            drawPixbuf drawWindow gc
                       discardedPixbuf
                       0 0                                -- srcx srcy
@@ -719,66 +706,77 @@ handDrawingArea = do
 colorBlue = Color 0x9000 0xa700 0xca00
 colorRed  = Color 0xe700 0x6d00 0x6400
 
-playerBox :: StateIO VBox
 playerBox = do
-   box     <- liftIO $ vBoxNew False 0
-   phase   <- phaseBox
-   action  <- actionBox
-   hand    <- liftIO handDrawingArea
-   sep1    <- liftIO hSeparatorNew
-   sep2    <- liftIO hSeparatorNew
-   modify (setHand hand)
-   liftIO $ boxPackStart box phase   PackNatural 0
-   liftIO $ boxPackStart box sep1    PackNatural 0
-   liftIO $ boxPackStart box action  PackNatural 0
-   liftIO $ boxPackStart box sep2    PackNatural 0
-   liftIO $ boxPackStart box hand    PackNatural 0
-   return box
+   box     <- vBoxNew False 0
+   (phase, phaseLabels) <- phaseBox
+   (action, done, context)  <- actionBox
+   hand    <- handDrawingArea
+   sep1    <- hSeparatorNew
+   sep2    <- hSeparatorNew
+   boxPackStart box phase   PackNatural 0
+   boxPackStart box sep1    PackNatural 0
+   boxPackStart box action  PackNatural 0
+   boxPackStart box sep2    PackNatural 0
+   boxPackStart box hand    PackNatural 0
+   return (box, phaseLabels, done, context, hand)
 
-gamePlayBox :: StateIO VBox
 gamePlayBox = do
-   box       <- liftIO $ vBoxNew False 0
-   tableaus  <- tableausBox
-   player    <- playerBox
-   sep       <- liftIO hSeparatorNew
-   liftIO $ boxPackStart box tableaus PackGrow    0
-   liftIO $ boxPackStart box player   PackNatural 0
-   return box
+   box <- vBoxNew False 0
+   (tableaus, opponents, playerTableau) <- tableausBox
+   (player, phaseLabels, done, context, hand) <- playerBox
+   sep <- hSeparatorNew
+   boxPackStart box tableaus PackGrow    0
+   boxPackStart box player   PackNatural 0
+   return (box, opponents, playerTableau, phaseLabels, done, context, hand)
 
-menuBar :: StateIO MenuBar
+menuBar :: IO MenuBar
 menuBar = do
-   menu  <- liftIO menuBarNew
-   game  <- liftIO $ menuItemNewWithLabel "Game"
-   modify (setMenu menu)
-   liftIO $ containerAdd menu game
+   menu  <- menuBarNew
+   game  <- menuItemNewWithLabel "Game"
+   containerAdd menu game
    return menu
 
-mainBox :: StateIO HBox
 mainBox = do
-   box      <- liftIO $ hBoxNew False 0
-   info     <- infoBox
-   gamePlay <- gamePlayBox
-   sep      <- liftIO vSeparatorNew
-   liftIO $ boxPackStart box info     PackNatural 0
-   liftIO $ boxPackStart box sep      PackNatural 0
-   liftIO $ boxPackStart box gamePlay PackGrow    0
-   return box
+   box <- hBoxNew False 0
+   (info, card, drawDiscardPool, playHistory) <- infoBox
+   (gamePlay, opponents, playerTableau, phaseLabels, done, context, hand) <- gamePlayBox
+   sep <- liftIO vSeparatorNew
+   boxPackStart box info     PackNatural 0
+   boxPackStart box sep      PackNatural 0
+   boxPackStart box gamePlay PackGrow    0
+   return (box, card, drawDiscardPool, playHistory, opponents, playerTableau, phaseLabels, done, context, hand)
 
-topLevelBox :: StateIO VBox
+--topLevelBox :: StateIO VBox
 topLevelBox = do
-   box  <- liftIO $ vBoxNew False 0
-   main <- mainBox
+   box  <- vBoxNew False 0
+   (main, card, drawDiscardPool, playHistory, opponents, playerTableau, phaseLabels, done, context, hand) <- mainBox
    menu <- menuBar
-   liftIO $ boxPackStart box menu PackNatural 0
-   liftIO $ boxPackStart box main PackGrow    0
-   return box
+   boxPackStart box menu PackNatural 0
+   boxPackStart box main PackGrow    0
+   return (box, menu, card, drawDiscardPool, playHistory, opponents, playerTableau, phaseLabels, done, context, hand)
 
-gameWindow :: StateIO Window
+--gameWindow :: StateIO Window
 gameWindow = do
    window <- liftIO windowNew
-   box    <- topLevelBox
-   liftIO $ containerAdd window box
-   return window
+   (box, menu, card, drawDiscardPool, playHistory, opponents, playerTableau, phaseLabels, done, context, hand) <- topLevelBox
+   containerAdd window box
+   stateRef <- newIORef (GUIState [] [] [] Discard 0 Nothing)
+   return (window, GameGUI menu
+                           card
+                           drawDiscardPool
+                           playHistory
+                           (phaseLabels !! 0)
+                           (phaseLabels !! 1)
+                           (phaseLabels !! 2)
+                           (phaseLabels !! 3)
+                           (phaseLabels !! 4)
+                           done
+                           context
+                           hand
+                           opponents
+                           playerTableau
+                           stateRef
+          )
 
 cardImageDirectory = "images" ++ pathSeparator : "cards"
 
@@ -803,25 +801,23 @@ initializeGUI :: IO GameGUI
 initializeGUI = do
    initGUI
    deck <- loadCardPixbufs
-   (window, gui) <- runStateT gameWindow emptyGameGUI
-   stateRef <- newIORef (GUIState [] [] [] Discard 0 Nothing)
-   let gui' = setGUIState stateRef gui
+   (window, gui) <- gameWindow
 
-   widgetAddEvents (getHand gui') [PointerMotionMask, ButtonPressMask]
-   on (getHand gui') exposeEvent (drawCurrentHand gui' deck)
-   on (getHand gui') motionNotifyEvent (motionInHand gui' deck)
-   on (getHand gui') buttonPressEvent (buttonPressedInHand gui' deck)
+   widgetAddEvents (getHand gui) [PointerMotionMask, ButtonPressMask]
+   on (getHand gui) exposeEvent (drawCurrentHand gui deck)
+   on (getHand gui) motionNotifyEvent (motionInHand gui deck)
+   on (getHand gui) buttonPressEvent (buttonPressedInHand gui deck)
 
-   widgetAddEvents (getPlayerTableau gui') [PointerMotionMask]
-   on (getPlayerTableau gui') exposeEvent (drawCurrentTableau gui' deck)
-   on (getPlayerTableau gui') motionNotifyEvent (motionInTableau gui' deck [])
-   on (getPlayerTableau gui') buttonPressEvent (buttonPressedInTableau gui' deck)
+   widgetAddEvents (getPlayerTableau gui) [PointerMotionMask]
+   on (getPlayerTableau gui) exposeEvent (drawCurrentTableau gui deck)
+   on (getPlayerTableau gui) motionNotifyEvent (motionInTableau gui deck [])
+   on (getPlayerTableau gui) buttonPressEvent (buttonPressedInTableau gui deck)
 
-   on (getDone gui') buttonActivated (doneButtonClicked gui')
+   on (getDone gui) buttonActivated (doneButtonClicked gui)
 
    onDestroy window mainQuit
    widgetShowAll window
-   return gui'
+   return gui
 
 startGUI :: IO ()
 startGUI = mainGUI
@@ -950,7 +946,7 @@ beginExplorePhase gui cards keepCount = do
    containerAdd contextBox label
    widgetShowAll contextBox
    modifyIORef stateRef (\state ->
-      state { 
+      state {
           exploreCards = cards
          ,currentActivity = Explore
          ,numDiscard = numDiscard
@@ -985,7 +981,7 @@ beginDevelopPhase gui developCards = do
    widgetShowAll contextBox
    widgetSetSensitive (getDone gui) True
    modifyIORef stateRef (\state ->
-      state { 
+      state {
           currentActivity = Develop
          ,currentHand = (enableAndDisableCards (currentHand state) developCards)
       })
@@ -1001,7 +997,7 @@ beginSettlePhase gui settleCards = do
    widgetShowAll contextBox
    widgetSetSensitive (getDone gui) True
    modifyIORef stateRef (\state ->
-      state { 
+      state {
           currentActivity = Settle
          ,currentHand = (enableAndDisableCards (currentHand state) settleCards)
       })
@@ -1050,7 +1046,7 @@ beginChooseGood gui eligibleCards numGoods cardName = do
    widgetShowAll contextBox
    widgetSetSensitive (getDone gui) False
    modifyIORef stateRef (\state ->
-      state { 
+      state {
           currentActivity = ChooseGood
          ,numDiscard = numGoods
          ,currentTableau = (enableAndDisableTableauCards (currentTableau state) eligibleCards)
