@@ -24,7 +24,7 @@ import qualified Data.Vector as V
 
 getBaseCards ::  IO [Card]
 getBaseCards = do
-   json <- BS.readFile "./cards_base.json"
+   json <- BS.readFile "./Rftg/cards_base.json"
    case eitherDecode' json :: Either String [Card] of
       Left err    -> error err -- error seems fine here, since bad json = broken program
       Right cards -> return cards

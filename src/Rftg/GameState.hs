@@ -38,17 +38,17 @@ data GameState =
 
 makeLenses ''GameState
 
-initGameState :: GameSettings -> Int -> IO GameState
-initGameState settings num_players = do
+initGameState :: GameSettings -> [Player] -> IO GameState
+initGameState settings players = do
    deck <- getDeck settings
    (first_goals, most_goals) <- getGoals settings
    -- TODO: use lenses
-   return GameState { _gPlayers        = undefined
+   return GameState { _gPlayers        = players
                     , _gDeck           = deck
                     , _gDiscard        = []
                     , _gFirstGoals     = first_goals
                     , _gMostGoals      = most_goals
-                    , _gVPPool         = num_players * 12
+                    , _gVPPool         = (length players) * 12
                     , _gPhases         = []
                     , _gCurPhase       = InitPhase
                     , _gRoundNum       = 0

@@ -22,3 +22,15 @@ data Player =
           }
 
 makeLenses ''Player
+
+createPlayer :: String -> Player
+createPlayer name =
+   Player { _pName = name
+          , _pPhaseChoice = (InitPhase, Nothing)
+          , _pHand = []
+          , _pExploringHand = []
+          , _pTableau = []
+          , _pVPs = 0
+          , _pPrestige = 0
+          , _pHasUsedPrestige = False
+          }
