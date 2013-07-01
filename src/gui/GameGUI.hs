@@ -26,9 +26,11 @@ data HandCard = HandCard Name Selected
    deriving (Show, Read)
 
 instance Eq TableauCard where
+   -- Equality check on Name and HasGood, ignore Selected
    (TableauCard a1 _ a2) == (TableauCard b1 _ b2) = a1 == b1 && a2 == b2
 
 instance Eq HandCard where
+   -- Equality check on Name, ignore Selected
    (HandCard a _) == (HandCard b _) = a == b
 
 type Hand = [HandCard]

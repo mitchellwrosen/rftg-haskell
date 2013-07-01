@@ -10,7 +10,8 @@ module GUI (
            ,beginChooseGood
            ) where
 
-import Text.Printf
+import Text.Printf (printf)
+import Debug.Trace (traceStack) -- Note: Only works if compiled -prof
 import Data.IORef
 import Data.Maybe
 import qualified Data.Map as M
@@ -22,6 +23,9 @@ import System.FilePath
 import System.Directory (getDirectoryContents)
 import Control.Monad
 import Control.Monad.State
+
+import Control.Lens
+
 import GameGUI
 import Messages
 
@@ -39,15 +43,21 @@ cardImage = do
    image <- liftIO $ imageNewFromFile "images/cards/card_back.jpg"
    return image
 
+-- The width of a drawing area in terms of the number of cards it is wide
+drawingAreaCardWidth :: Int
+drawingAreaCardWidth = 6
+-- The card width in terms of its container (e.g. tableauDrawingArea...)
+cardWidthRatio :: Double
+cardWidthRatio = 1 / fromIntegral drawingAreaCardWidth
 currentCardHeight :: Int -> Int
 currentCardHeight width =
    let (cardWidth, cardHeight) = cardImageDims
        ratio = (fromIntegral cardHeight) / (fromIntegral cardWidth)
-       height = fromIntegral . round $ (fromIntegral width / 6.0) * ratio
+       height = fromIntegral . round $ fromIntegral width * cardWidthRatio * ratio
    in height
 
 drawDiscardPoolLabel :: IO Label
-drawDiscardPoolLabel = labelNew (Just $ drawDiscardPoolText 100 0 48)
+drawDiscardPoolLabel = labelNew (Just $ drawDiscardPoolText 0 0 0)
 
 playHistoryTextView :: IO TextView
 playHistoryTextView = do
@@ -123,23 +133,28 @@ tableauDrawingArea color = do
    widgetModifyBg drawingArea StateNormal color
    return drawingArea
 
-strikeThroughLabel :: Label -> IO Label
-strikeThroughLabel label = do
+adjustLabelMarkup :: String -> String -> Label -> IO Label
+adjustLabelMarkup open close label = do
    text <- labelGetText label
-   labelSetMarkup label ("<s>" ++ text ++ "</s>")
+   labelSetMarkup label (open ++ text ++ close)
    return label
+
+strikeThroughLabel :: Label -> IO Label
+strikeThroughLabel = adjustLabelMarkup "<s>" "</s>"
 
 colorBoldLabel :: Label -> String -> IO Label
-colorBoldLabel label color = do
-   text <- labelGetText label
-   labelSetMarkup label ("<b><big><span color=\"" ++ color ++ "\">" ++ text ++ "</span></big></b>")
-   return label
+colorBoldLabel label color =
+   adjustLabelMarkup ("<b><big><span color=\"" ++ color ++ "\">")
+                     "</span></big></b>"
+                     label
 
-exploreLabel = labelNew (Just "Explore") >>= strikeThroughLabel
-developLabel = labelNew (Just "Develop") >>= strikeThroughLabel
-settleLabel  = labelNew (Just "Settle")  >>= strikeThroughLabel
-consumeLabel = labelNew (Just "Consume") >>= strikeThroughLabel
-produceLabel = labelNew (Just "Produce") >>= strikeThroughLabel
+newPhaseLabel :: String -> IO Label
+newPhaseLabel = labelNew . Just >=> strikeThroughLabel
+exploreLabel = newPhaseLabel "Explore"
+developLabel = newPhaseLabel "Develop"
+settleLabel  = newPhaseLabel "Settle"
+consumeLabel = newPhaseLabel "Consume"
+produceLabel = newPhaseLabel "Produce"
 
 -- TODO: Change this up to use phases Show to make a Map
 phaseBox :: IO (HBox, [Label])
@@ -162,13 +177,21 @@ doneButton = do
    widgetSetSensitive button False
    return button
 
+discardText :: Int -> String
 discardText num = "Choose " ++ show num ++ " cards to discard"
-discardContextLabel num = labelNew (Just $ discardText num)
 
+discardContextLabel :: Int -> IO Label
+discardContextLabel = labelNew . Just . discardText
+
+developContextLabel :: IO Label
 developContextLabel = labelNew (Just $ "Choose 1 card to develop")
+settleContextLabel :: IO Label
 settleContextLabel = labelNew (Just $ "Choose 1 card to settle")
+chooseConsumePowerContextLabel :: IO Label
 chooseConsumePowerContextLabel = labelNew (Just $ "Choose a consume power")
+chooseGoodContextLabel :: String -> IO Label
 chooseGoodContextLabel cardName = labelNew (Just $ "Choose a good for " ++ cardName)
+produceContextLabel :: IO Label
 produceContextLabel = labelNew (Just $ "Choose a windfall to produce on")
 
 contextBox :: IO HBox
@@ -178,6 +201,7 @@ contextBox = do
    boxPackStart box context PackGrow 0
    return box
 
+actionBox :: IO (HBox, Button, HBox)
 actionBox = do
    box  <- hBoxNew False 0
    done <- doneButton
@@ -191,9 +215,9 @@ cardPadding height = height `quot` 10
 
 currentHandHeight :: Int -> Int
 currentHandHeight width =
-   let height = currentCardHeight width
-       padding = cardPadding height
-   in height + padding
+   let height  = currentCardHeight width
+       padding = cardPadding       height
+   in  height + padding
 
 lookupCardPixbuf :: Deck -> String -> Pixbuf
 lookupCardPixbuf m card = fromMaybe (error $ "card lookup failed for card: " ++ card) (M.lookup card m)
@@ -215,12 +239,15 @@ getPixbufsForTableau deck = map (\(TableauCard name _ _) -> lookupCardPixbuf dec
 
 getTableauCardsXY :: Tableau -> (Int, Int) -> [(TableauCard, (Int, Int))]
 getTableauCardsXY tableau (width, height) =
-   let xOffset = width `quot` 6
-       pos card i = (card, (xOffset * (i `rem` 6), if i >= 6 then height `quot` 2 else 0))
+   let xOffset = width `quot` drawingAreaCardWidth
+       pos card i = (card, (xOffset * (i `rem` drawingAreaCardWidth),
+                            if i >= drawingAreaCardWidth
+                            then height `quot` 2
+                            else 0))
    in mapI pos tableau
 
 cardDims :: (Int, Int) -> (Int, Int)
-cardDims (width, _) = (width `quot` 6, currentCardHeight width)
+cardDims (width, _) = (width `quot` drawingAreaCardWidth, currentCardHeight width)
 
 getTableauCardIndexFromXY :: Tableau -> (Double, Double) -> (Int, Int) -> Maybe Int
 getTableauCardIndexFromXY tableau pos size =
@@ -292,8 +319,11 @@ motionInTableau gui deck tableau = do
 
 verifyNumberToConsume :: GameGUI -> Tableau -> Int -> IO ()
 verifyNumberToConsume gui tableau num =
-   let numSelected = length (filter (\(TableauCard _ selected _) -> isSelected selected) tableau)
-   in widgetSetSensitive (getDone $ getGamePlayGUI gui) (numSelected == num)
+   let numSelected = foldr selectedFunc 0 tableau
+       selectedFunc (TableauCard _ selected _) acc
+         | isSelected selected = acc + 1
+         | otherwise           = acc
+   in  widgetSetSensitive (getDone $ getGamePlayGUI gui) (numSelected == num)
 
 buttonPressedInTableauChooseGood :: GameGUI -> Deck -> IORef GUIState -> EventM EButton Bool
 buttonPressedInTableauChooseGood gui deck stateRef = do
@@ -346,26 +376,34 @@ toggleSelection Selected = UnSelected
 toggleSelection UnSelected = Selected
 toggleSelection a = a
 
+stackTraceError :: String -> a
+stackTraceError s = traceStack s (error s)
+
+boundsCheck :: [a] -> Int -> b -> b
+boundsCheck list ndx b =
+   if ndx < 0 || ndx >= length list
+   then stackTraceError "ndx out of bounds"
+   else b
+
 toggleTableauCardAtIndex :: Tableau -> Int -> Tableau
-toggleTableauCardAtIndex [] _        = []
-toggleTableauCardAtIndex ((TableauCard name selected hasGood):xs) 0 =
-   TableauCard name (toggleSelection selected) hasGood : xs
-toggleTableauCardAtIndex (x:xs) ndx  =
-   x : toggleTableauCardAtIndex xs (ndx - 1)
+toggleTableauCardAtIndex hand ndx =
+   boundsCheck hand ndx $ over (element ndx) toggleTableauCard hand
+   where toggleTableauCard (TableauCard n selected h) =
+            TableauCard n (toggleSelection selected) h
 
 toggleHandCardAtIndex :: Hand -> Int -> Hand
-toggleHandCardAtIndex [] _        = []
-toggleHandCardAtIndex ((HandCard name selected):xs) 0 = HandCard name (toggleSelection selected) : xs
-toggleHandCardAtIndex (x:xs) ndx  = x : toggleHandCardAtIndex xs (ndx - 1)
+toggleHandCardAtIndex hand ndx =
+   boundsCheck hand ndx $ over (element ndx) toggleHandCard hand
+   where toggleHandCard (HandCard n selected) =
+            HandCard n (toggleSelection selected)
 
 toggleExclusiveCardAtIndex :: Hand -> Int -> Hand
-toggleExclusiveCardAtIndex [] _        = []
-toggleExclusiveCardAtIndex ((HandCard name selected):xs) 0 =
-   HandCard name (toggleSelection selected) : toggleExclusiveCardAtIndex xs (-1)
-toggleExclusiveCardAtIndex ((HandCard name Selected):xs) ndx =
-   HandCard name UnSelected : toggleExclusiveCardAtIndex xs (ndx - 1)
-toggleExclusiveCardAtIndex ((HandCard name selected):xs) ndx =
-   HandCard name selected : toggleExclusiveCardAtIndex xs (ndx - 1)
+toggleExclusiveCardAtIndex hand ndx =
+   fromMaybe (stackTraceError "toggleExclusiveCardAtIndex") (itraverse toggleCard hand)
+   where toggleCard _ card@(HandCard n Disabled) = Just card
+         toggleCard i (HandCard n selected)
+            | i == ndx  = Just $ HandCard n (toggleSelection selected)
+            | otherwise = Just $ HandCard n UnSelected
 
 getHandCardsXYForDiscard :: Hand -> Int -> [(HandCard, (Int, Int))]
 getHandCardsXYForDiscard hand width =
