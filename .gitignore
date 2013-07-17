@@ -1,2 +1,4 @@
 gui.glade
+*.o
+*.hi
 Main

@@ -1,0 +1,20 @@
+[
+   {
+      "name": "Old Earth",
+      "kind": "world",
+      "settle_kind": "non_military",
+      "production_kind": {
+         "production": "any"
+      },
+      "cost": 3,
+      "vp_value": 2,
+      "trade_powers": [
+         {
+            "reward": [
+               { "draw": 1 }
+            ],
+            "times": 1
+         }
+      ]
+   }
+]
