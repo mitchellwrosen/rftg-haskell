@@ -28,4 +28,4 @@ data OutMessage =
    deriving (Show, Read)
 
 sendMessage :: OutMessage -> IO ()
-sendMessage = putStrLn . show
+sendMessage = print
