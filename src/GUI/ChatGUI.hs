@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Main where
 
 import Control.Monad.State (liftIO)
@@ -6,7 +7,7 @@ import Control.Concurrent (forkIO)
 import Control.Concurrent.STM (newTChanIO, atomically, writeTChan, TChan(..))
 import Control.Monad (forever)
 import Control.Monad.State (StateT(..), liftIO)
-import Data.ByteString.Lazy.Char8 (unpack)
+import Data.ByteString.Lazy.Char8 (unpack, pack)
 
 import Graphics.UI.Gtk
     ( VBox(..)
@@ -26,6 +27,8 @@ import Graphics.UI.Gtk
 
     , textBufferGetIterAtOffset
     , textBufferGetText
+    , textBufferInsert
+    , textBufferDelete
 
     , hSeparatorNew
 
@@ -47,7 +50,8 @@ import Graphics.UI.Gtk
     , eventModifier
     , keyPressEvent
     )
-import Data.Aeson (encode)
+import Data.Aeson (decode, encode)
+import Control.Lens (makeLenses, use)
 
 import Client.TcpClient (startTcpClient)
 import Client.Message
@@ -61,6 +65,13 @@ data ChatGUI = ChatGUI
     , chatLogView :: TextView
     }
 
+data ChatState = ChatState
+    { _chatGUI :: ChatGUI
+    }
+makeLenses ''ChatState
+
+type ChatIO = StateT ChatState IO
+
 main :: IO ()
 main = do
     initGUI
@@ -70,7 +81,7 @@ main = do
     outChan <- newTChanIO
     on (chatView gui) keyPressEvent (keyPressInChatTextView outChan gui)
 
-    forkIO $ startTcpClient handleFunc ChatState outChan hostname (read portStr)
+    forkIO $ startTcpClient handleFunc (ChatState gui) outChan hostname (read portStr)
 
     onDestroy window mainQuit
     widgetShowAll window
@@ -82,7 +93,8 @@ sendChatMessage outChan gui = do
     startIter <- textBufferGetIterAtOffset buffer 0
     endIter   <- textBufferGetIterAtOffset buffer (-1)
     text      <- textBufferGetText buffer startIter endIter False
-    atomically $ writeTChan outChan (encodeToString . ChatMessage $ ChatMessageData text)
+    textBufferDelete buffer startIter endIter
+    atomically $ writeTChan outChan (encodeToString . ChatMessage . ChatMessageData $ text)
   where
     encodeToString = unpack . encode
 
@@ -124,13 +136,18 @@ chatWindow = do
 
     return (window, ChatGUI chatView chatLogView)
 
-data ChatState = ChatState
-    {
-    }
-type ChatIO = StateT ChatState IO
+appendText :: TextView -> String -> IO ()
+appendText textView text = do
+    buffer <- textViewGetBuffer textView
+    iter   <- textBufferGetIterAtOffset buffer (-1)
+    textBufferInsert buffer iter (text ++ "\n")
 
 handleFunc :: String -> ChatIO ()
-handleFunc = liftIO . putStrLn
+handleFunc json = do
+    chatLogView <- fmap chatLogView $ use chatGUI
+    case decode $ pack json :: Maybe Message of
+        Just (ChatMessage info) -> liftIO $ appendText chatLogView (message info)
+        _ -> return ()
 
 getArguments :: IO (String, String)
 getArguments = do
