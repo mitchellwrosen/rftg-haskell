@@ -922,7 +922,7 @@ topLevelBox = do
 
 gameWindow :: IO (Window, GameGUI)
 gameWindow = do
-    window <- liftIO windowNew
+    window <- windowNew
     (box, menu, infoGUI, gamePlayGUI) <- topLevelBox
     containerAdd window box
     consumePowers <- comboBoxNewText -- Doesn't get added to the window.
