@@ -1,19 +1,26 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
-import Control.Monad.State (liftIO)
 import System.Environment (getArgs)
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, myThreadId)
 import Control.Concurrent.STM (newTChanIO, atomically, writeTChan, TChan(..))
-import Control.Monad (forever)
+import Control.Applicative ((<$>))
+import Control.Monad (forever, void)
 import Control.Monad.State (StateT(..), liftIO)
 import Data.ByteString.Lazy.Char8 (unpack, pack)
 
 import Graphics.UI.Gtk
     ( VBox(..)
     , vBoxNew
+    , hBoxNew
+
+    , ListStore(..)
+    , listStoreNew
+    , listStoreAppend
+    , treeViewNewWithModel
 
     , mainGUI
+    , postGUIAsync
     , mainQuit
     , initGUI
 
@@ -24,10 +31,13 @@ import Graphics.UI.Gtk
     , textViewGetBuffer
     , textViewSetEditable
     , textViewSetCursorVisible
+    , textViewScrollToIter
 
-    , textBufferGetIterAtOffset
+    , textBufferGetStartIter
+    , textBufferGetEndIter
     , textBufferGetText
     , textBufferInsert
+    , textBufferGetInsert
     , textBufferDelete
 
     , hSeparatorNew
@@ -41,6 +51,7 @@ import Graphics.UI.Gtk
 
     , containerAdd
     , widgetShowAll
+    , onSizeAllocate
 
     , EventM(..)
     , Modifier(..)
@@ -49,6 +60,10 @@ import Graphics.UI.Gtk
     , eventKeyName
     , eventModifier
     , keyPressEvent
+
+    , PolicyType(..)
+    , scrolledWindowNew
+    , scrolledWindowSetPolicy
     )
 import Data.Aeson (decode, encode)
 import Control.Lens (makeLenses, use)
@@ -58,11 +73,13 @@ import Client.Message
     (
       Message(..)
     , ChatMessageData(..)
+    , UserMessageData(..)
     )
 
 data ChatGUI = ChatGUI
     { chatView    :: TextView
     , chatLogView :: TextView
+    , userList    :: ListStore String
     }
 
 data ChatState = ChatState
@@ -81,22 +98,27 @@ main = do
     outChan <- newTChanIO
     on (chatView gui) keyPressEvent (keyPressInChatTextView outChan gui)
 
-    forkIO $ startTcpClient handleFunc (ChatState gui) outChan hostname (read portStr)
+    forkIO $ startTcpClient handleFunc (connectFunc outChan) (ChatState gui) outChan hostname (read portStr)
 
     onDestroy window mainQuit
     widgetShowAll window
     mainGUI
 
+encodeToString :: Message -> String
+encodeToString = unpack . encode
+
+sendNewUserMessage :: TChan String -> String -> IO ()
+sendNewUserMessage outChan userName =
+    atomically $ writeTChan outChan (encodeToString . UserMessage . UserMessageData $ userName)
+
 sendChatMessage :: TChan String -> ChatGUI -> IO ()
 sendChatMessage outChan gui = do
     buffer    <- textViewGetBuffer (chatView gui)
-    startIter <- textBufferGetIterAtOffset buffer 0
-    endIter   <- textBufferGetIterAtOffset buffer (-1)
+    startIter <- textBufferGetStartIter buffer
+    endIter   <- textBufferGetEndIter buffer
     text      <- textBufferGetText buffer startIter endIter False
     textBufferDelete buffer startIter endIter
     atomically $ writeTChan outChan (encodeToString . ChatMessage . ChatMessageData $ text)
-  where
-    encodeToString = unpack . encode
 
 keyPressInChatTextView :: TChan String -> ChatGUI -> EventM EKey Bool
 keyPressInChatTextView outChan gui = do
@@ -106,7 +128,7 @@ keyPressInChatTextView outChan gui = do
         "Return"
             | Shift `elem` modifiers -> return False
             | otherwise -> do
-                liftIO $ sendChatMessage outChan gui
+                liftIO . postGUIAsync $ sendChatMessage outChan gui
                 return True
         _ -> return False
 
@@ -122,31 +144,58 @@ chatLogTextView = do
 
 chatWindow :: IO (Window, ChatGUI)
 chatWindow = do
-    window      <- windowNew
-    box         <- vBoxNew False 0
+    window <- windowNew
 
     chatView    <- chatTextView
     sep         <- hSeparatorNew
-    chatLogView <- chatLogTextView
 
-    boxPackStart box chatLogView PackGrow    0
-    boxPackStart box sep         PackNatural 0
-    boxPackStart box chatView    PackNatural 0
+    chatLogView <- chatLogTextView
+    onSizeAllocate chatLogView (\_ -> scrollToEnd chatLogView)
+
+    chatLogWindow <- scrolledWindowNew Nothing Nothing
+    scrolledWindowSetPolicy chatLogWindow PolicyNever PolicyAutomatic
+    containerAdd chatLogWindow chatLogView
+
+    userList     <- listStoreNew ["bob loblaw"]
+    userListView <- treeViewNewWithModel userList
+
+    hbox <- hBoxNew False 0
+    boxPackStart hbox userListView  PackGrow 0
+    boxPackStart hbox chatLogWindow PackGrow 0
+
+    box    <- vBoxNew False 0
+    boxPackStart box hbox     PackGrow    0
+    boxPackStart box sep      PackNatural 0
+    boxPackStart box chatView PackNatural 0
     containerAdd window box
 
-    return (window, ChatGUI chatView chatLogView)
+    return (window, ChatGUI chatView chatLogView userList)
+
+scrollToEnd :: TextView -> IO ()
+scrollToEnd textView = do
+    buffer <- textViewGetBuffer textView
+    iter   <- textBufferGetEndIter buffer
+    void $ textViewScrollToIter textView iter 0.0 Nothing
 
 appendText :: TextView -> String -> IO ()
 appendText textView text = do
     buffer <- textViewGetBuffer textView
-    iter   <- textBufferGetIterAtOffset buffer (-1)
+    iter   <- textBufferGetEndIter buffer
     textBufferInsert buffer iter (text ++ "\n")
+
+appendUser :: ListStore String -> String -> IO ()
+appendUser list username = void $ listStoreAppend list username
+
+connectFunc :: TChan String -> ChatIO ()
+connectFunc outChan = liftIO $ sendNewUserMessage outChan "chebert"
 
 handleFunc :: String -> ChatIO ()
 handleFunc json = do
-    chatLogView <- fmap chatLogView $ use chatGUI
+    chatLogView <- chatLogView <$> use chatGUI
+    userList    <- userList    <$> use chatGUI
     case decode $ pack json :: Maybe Message of
-        Just (ChatMessage info) -> liftIO $ appendText chatLogView (message info)
+        Just (ChatMessage info) -> liftIO . postGUIAsync $ appendText chatLogView (message info)
+        Just (UserMessage info) -> liftIO . postGUIAsync $ appendUser userList (userName info)
         _ -> return ()
 
 getArguments :: IO (String, String)

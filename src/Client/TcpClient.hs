@@ -23,7 +23,9 @@ import System.IO (Handle, hClose, hGetLine, hFlush, hPutStrLn)
 -- | Starts the TCP Client connection.
 startTcpClient ::  -- | The handler callback for incoming messages.
                   (String -> StateT a IO ())
-               -> a  -- ^ The initial state of the handler function.
+               -- | The handler for a new connection.
+               -> StateT a IO ()
+               -> a  -- ^ The initial state of the handler and connect function.
                -- | The out-bound channel that delivers messages from the user.
                -> TChan String
                -- | The host name.
@@ -31,24 +33,27 @@ startTcpClient ::  -- | The handler callback for incoming messages.
                -- | The port #.
                -> Int
                -> IO ()
-startTcpClient handleFunc handleFuncState outChan hostname port =
+startTcpClient handleFunc connectFunc handleFuncState outChan hostname port =
     withSocketsDo $ do
         let portID = PortNumber . fromIntegral $ port
         bracket (connectTo hostname portID)
                 hClose
-                (startListenCycle handleFunc handleFuncState outChan)
+                (startListenCycle handleFunc connectFunc handleFuncState outChan)
 
 -- | Begins the cycle to listen for inbound messages.
 startListenCycle :: -- | The handler callback.
                     (String -> StateT a IO ())
+                 -- | The handler for a new connection.
+                 -> StateT a IO ()
                  -> a  -- ^ Initial handler function state.
                  -> TChan String  -- ^ Out-bound channel.
                  -> Handle  -- ^ Handle to the socket.
                  -> IO ()
-startListenCycle handleFunc handleFuncState outChan socket = do
+startListenCycle handleFunc connectFunc handleFuncState outChan socket = do
     inChan <- newTChanIO
+    state <- execStateT connectFunc handleFuncState
     forkIO $ listenLoop (hGetLine socket) inChan
-    mainLoop handleFunc handleFuncState inChan outChan socket
+    mainLoop handleFunc state inChan outChan socket
 
 -- | The main loop. Either delivers an outbound message or recieves an inbound
 -- message.
@@ -80,5 +85,4 @@ select chan1 chan2 =
 
 -- | Performs an action forever and writes the result to the channel.
 listenLoop :: IO a -> TChan a -> IO ()
-listenLoop action channel = forever $
-    action >>= atomically . writeTChan channel
+listenLoop action channel = forever $ action >>= atomically . writeTChan channel
