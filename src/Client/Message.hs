@@ -27,17 +27,6 @@ instance ToJSON UserMessageData where
     toJSON (UserMessageData username) =
         object [ "userName" .= username ]
 
-data JoinMessageData =
-    JoinMessageData
-    { joinRoom :: String
-    }
-instance FromJSON JoinMessageData where
-    parseJSON (Object v) = JoinMessageData <$>
-                           v .: "room"
-instance ToJSON JoinMessageData where
-    toJSON (JoinMessageData room) =
-        object [ "room" .= room ]
-
 data ChatMessageData =
     ChatMessageData
     { message  :: String
@@ -49,17 +38,28 @@ instance ToJSON ChatMessageData where
     toJSON (ChatMessageData message) =
         object [ "message" .= message ]
 
+data DisconnectMessageData =
+    DisconnectMessageData
+    { dUserName :: String
+    }
+instance FromJSON DisconnectMessageData where
+    parseJSON (Object v) = DisconnectMessageData <$>
+                           v .: "userName"
+instance ToJSON DisconnectMessageData where
+    toJSON (DisconnectMessageData userName) =
+        object [ "userName" .= userName ]
+
 data Message = ChatMessage ChatMessageData
-             | JoinMessage JoinMessageData
              | UserMessage UserMessageData
+             | DisconnectMessage DisconnectMessageData
 
 instance FromJSON Message where
     parseJSON (Object v) = do
         messageType <- v .: "type"
         case (messageType :: String) of
             "user" -> UserMessage <$> v .: "data"
-            "join" -> JoinMessage <$> v .: "data"
             "chat" -> ChatMessage <$> v .: "data"
+            "disconnect" -> DisconnectMessage <$> v .: "data"
             _ -> error "unknown message type"
 
 instance ToJSON Message where
@@ -67,11 +67,11 @@ instance ToJSON Message where
         object [ "type" .= String "chat"
                , "data" .= toJSON dta
                ]
-    toJSON (JoinMessage dta) =
-        object [ "type" .= String "join"
-               , "data" .= toJSON dta
-               ]
     toJSON (UserMessage dta) =
         object [ "type" .= String "user"
+               , "data" .= toJSON dta
+               ]
+    toJSON (DisconnectMessage dta) =
+        object [ "type" .= String "disconnect"
                , "data" .= toJSON dta
                ]

@@ -8,6 +8,7 @@ import Control.Applicative ((<$>))
 import Control.Monad (forever, void)
 import Control.Monad.State (StateT(..), liftIO)
 import Data.ByteString.Lazy.Char8 (unpack, pack)
+import Data.List (elemIndex)
 
 import Graphics.UI.Gtk
     ( VBox(..)
@@ -22,6 +23,8 @@ import Graphics.UI.Gtk
     , ListStore(..)
     , listStoreNew
     , listStoreAppend
+    , listStoreToList
+    , listStoreRemove
 
     , labelNew
 
@@ -108,6 +111,7 @@ import Client.Message
       Message(..)
     , ChatMessageData(..)
     , UserMessageData(..)
+    , DisconnectMessageData(..)
     )
 
 data NetworkGUI = NetworkGUI
@@ -124,7 +128,8 @@ data ChatGUI = ChatGUI
     }
 
 data ChatState = ChatState
-    { _chatGUI :: ChatGUI
+    { _chatGUI  :: ChatGUI
+    , _cUserName :: String
     }
 makeLenses ''ChatState
 
@@ -171,8 +176,9 @@ connectButtonClicked networkWindow window networkGUI outChan = do
     chatGUI <- chatWindow window outChan
     portStr  <- entryGetText (portEntry networkGUI)
     hostname <- entryGetText (serverEntry networkGUI)
+    userName <- entryGetText (usernameEntry networkGUI)
     -- TODO: Right now this assumes successful connection to the network.
-    forkIO $ startTcpClient handleFunc (connectFunc outChan) (ChatState chatGUI) outChan hostname (read portStr)
+    forkIO $ startTcpClient handleFunc (connectFunc outChan) (ChatState chatGUI userName) outChan hostname (read portStr)
     widgetDestroy networkWindow
 
 main :: IO ()
@@ -289,8 +295,18 @@ appendText textView text = do
 appendUser :: ListStore String -> String -> IO ()
 appendUser list username = void $ listStoreAppend list username
 
+removeUser :: ListStore String -> String -> IO ()
+removeUser list username = do
+    usernames <- listStoreToList list
+    let may_ndx = username `elemIndex` usernames
+    case may_ndx of
+        Just ndx -> listStoreRemove list ndx
+        _ -> putStrLn $ "Could not find user: " ++ username
+
 connectFunc :: TChan String -> ChatIO ()
-connectFunc outChan = liftIO $ sendNewUserMessage outChan "chebert"
+connectFunc outChan = do
+    username <- use cUserName
+    liftIO $ sendNewUserMessage outChan username
 
 handleFunc :: String -> ChatIO ()
 handleFunc json = do
@@ -299,4 +315,5 @@ handleFunc json = do
     case decode $ pack json :: Maybe Message of
         Just (ChatMessage info) -> liftIO . postGUIAsync $ appendText chatLogView (message info)
         Just (UserMessage info) -> liftIO . postGUIAsync $ appendUser userList (userName info)
+        Just (DisconnectMessage info) -> liftIO . postGUIAsync $ removeUser userList (dUserName info)
         _ -> return ()
