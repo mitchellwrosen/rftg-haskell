@@ -16,6 +16,17 @@ import Data.Aeson
     , object
     )
 
+data UserListMessageData =
+    UserListMessageData
+    { userNames :: [String]
+    }
+instance FromJSON UserListMessageData where
+    parseJSON (Object v) = UserListMessageData <$>
+                           v .: "userNames"
+instance ToJSON UserListMessageData where
+    toJSON (UserListMessageData usernames) =
+        object [ "userNames" .= usernames ]
+
 data UserMessageData =
     UserMessageData
     { userName :: String
@@ -51,6 +62,7 @@ instance ToJSON DisconnectMessageData where
 
 data Message = ChatMessage ChatMessageData
              | UserMessage UserMessageData
+             | UserListMessage UserListMessageData
              | DisconnectMessage DisconnectMessageData
 
 instance FromJSON Message where
@@ -58,6 +70,7 @@ instance FromJSON Message where
         messageType <- v .: "type"
         case (messageType :: String) of
             "user" -> UserMessage <$> v .: "data"
+            "userlist" -> UserListMessage <$> v .: "data"
             "chat" -> ChatMessage <$> v .: "data"
             "disconnect" -> DisconnectMessage <$> v .: "data"
             _ -> error "unknown message type"
@@ -69,6 +82,10 @@ instance ToJSON Message where
                ]
     toJSON (UserMessage dta) =
         object [ "type" .= String "user"
+               , "data" .= toJSON dta
+               ]
+    toJSON (UserListMessage dta) =
+        object [ "type" .= String "userlist"
                , "data" .= toJSON dta
                ]
     toJSON (DisconnectMessage dta) =

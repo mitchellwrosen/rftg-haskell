@@ -14,10 +14,16 @@ import qualified Data.Map as M
 
 import Server.TcpServer (sendMessageToClient, startTcpServer, UserID(..), UserMap(..))
 import Client.Message
+    ( Message(..)
+    , DisconnectMessageData(..)
+    , ChatMessageData(..)
+    , UserListMessageData(..)
+    , UserMessageData(..)
+    )
 
 data ChatState = ChatState
     { _userIDs :: [UserID]
-    , _userNames :: M.Map UserID String
+    , _cUserNames :: M.Map UserID String
     };
 makeLenses ''ChatState
 
@@ -31,11 +37,11 @@ main = do
 -- | Callback for when client disconnections occur.
 userDisconnectFunc :: UserID -> UserMap -> ChatIO ()
 userDisconnectFunc userid userMap = do
-    may_username <- fmap (M.lookup userid) (use userNames)
+    may_username <- fmap (M.lookup userid) (use cUserNames)
     case may_username of
         Just username -> do
             userIDs %= delete userid
-            userNames %= M.delete userid
+            cUserNames %= M.delete userid
             sendMessageToAllClients userMap (disconnectMessage username)
         _ -> liftIO . putStrLn $ "Bad userID: " ++ show userid
 
@@ -59,18 +65,19 @@ disconnectMessage = unpack . encode . DisconnectMessage . DisconnectMessageData
 chatMessage :: String -> String
 chatMessage = unpack . encode . ChatMessage . ChatMessageData
 
-userMessage :: String -> String
-userMessage = unpack . encode . UserMessage . UserMessageData
+userListMessage :: [String] -> String
+userListMessage = unpack . encode . UserListMessage . UserListMessageData
 
 executeCommand :: UserID -> UserMap -> Message -> ChatIO ()
 executeCommand userid userMap (ChatMessage info) = do
-    may_name <- fmap (M.lookup userid) (use userNames)
+    may_name <- fmap (M.lookup userid) (use cUserNames)
     case may_name of
         Just name -> sendMessageToAllClients userMap (chatMessage $ name ++ ": " ++ message info)
         _ -> liftIO . putStrLn $ "bad id: " ++ show userid
 executeCommand userid userMap (UserMessage info) = do
-    userNames %= M.insert userid (userName info)
-    sendMessageToAllClients userMap (userMessage $ userName info)
+    cUserNames %= M.insert userid (userName info)
+    usernames <- fmap M.elems (use cUserNames)
+    sendMessageToAllClients userMap (userListMessage $ usernames)
 
 -- | Callback to handle new users.
 newUserFunc :: UserID -> ChatIO ()

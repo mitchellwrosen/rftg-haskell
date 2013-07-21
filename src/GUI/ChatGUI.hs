@@ -5,7 +5,7 @@ import System.Environment (getArgs)
 import Control.Concurrent (forkIO, myThreadId)
 import Control.Concurrent.STM (newTChanIO, atomically, writeTChan, TChan(..))
 import Control.Applicative ((<$>))
-import Control.Monad (forever, void)
+import Control.Monad (forM_, forever, void)
 import Control.Monad.State (StateT(..), liftIO)
 import Data.ByteString.Lazy.Char8 (unpack, pack)
 import Data.List (elemIndex)
@@ -22,6 +22,7 @@ import Graphics.UI.Gtk
 
     , ListStore(..)
     , listStoreNew
+    , listStoreClear
     , listStoreAppend
     , listStoreToList
     , listStoreRemove
@@ -111,6 +112,7 @@ import Client.Message
       Message(..)
     , ChatMessageData(..)
     , UserMessageData(..)
+    , UserListMessageData(..)
     , DisconnectMessageData(..)
     )
 
@@ -292,8 +294,13 @@ appendText textView text = do
     iter   <- textBufferGetEndIter buffer
     textBufferInsert buffer iter (text ++ "\n")
 
-appendUser :: ListStore String -> String -> IO ()
-appendUser list username = void $ listStoreAppend list username
+replaceUsers :: ListStore String -> [String] -> IO ()
+replaceUsers list usernames =
+    listStoreClear list >>
+    forM_ usernames (appendUser list)
+  where
+    appendUser :: ListStore String -> String -> IO ()
+    appendUser list username = void $ listStoreAppend list username
 
 removeUser :: ListStore String -> String -> IO ()
 removeUser list username = do
@@ -314,6 +321,6 @@ handleFunc json = do
     userList    <- userList    <$> use chatGUI
     case decode $ pack json :: Maybe Message of
         Just (ChatMessage info) -> liftIO . postGUIAsync $ appendText chatLogView (message info)
-        Just (UserMessage info) -> liftIO . postGUIAsync $ appendUser userList (userName info)
+        Just (UserListMessage info) -> liftIO . postGUIAsync $ replaceUsers userList (userNames info)
         Just (DisconnectMessage info) -> liftIO . postGUIAsync $ removeUser userList (dUserName info)
         _ -> return ()
