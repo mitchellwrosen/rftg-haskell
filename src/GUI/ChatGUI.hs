@@ -27,7 +27,9 @@ import Graphics.UI.Gtk
     , listStoreToList
     , listStoreRemove
 
+    , Label(..)
     , labelNew
+    , labelSetText
 
     , Entry(..)
     , entryNew
@@ -52,6 +54,7 @@ import Graphics.UI.Gtk
     , AttrOp(..)
 
     , mainGUI
+    , postGUISync
     , postGUIAsync
     , mainQuit
     , initGUI
@@ -104,7 +107,7 @@ import Graphics.UI.Gtk
     , scrolledWindowSetPolicy
     )
 import Data.Aeson (decode, encode)
-import Control.Lens (makeLenses, use)
+import Control.Lens (makeLenses, use, (.=))
 
 import Client.TcpClient (startTcpClient)
 import Client.Message
@@ -121,6 +124,7 @@ data NetworkGUI = NetworkGUI
     , usernameEntry :: Entry
     , serverEntry   :: Entry
     , connectButton :: Button
+    , statusLabel   :: Label
     }
 
 data ChatGUI = ChatGUI
@@ -130,7 +134,7 @@ data ChatGUI = ChatGUI
     }
 
 data ChatState = ChatState
-    { _chatGUI  :: ChatGUI
+    { _chatGUI   :: Maybe ChatGUI
     , _cUserName :: String
     }
 makeLenses ''ChatState
@@ -163,25 +167,39 @@ networkGUI window = do
     boxPackStart usernameBox usernameLabel PackGrow 0
     boxPackStart usernameBox usernameEntry PackGrow 0
 
+    statusLabel <- labelNew Nothing
+
     connectButton <- buttonNewWithLabel "Connect"
 
     mainBox <- vBoxNew False 0
     boxPackStart mainBox serverBox PackGrow 0
     boxPackStart mainBox usernameBox PackGrow 0
+    boxPackStart mainBox statusLabel PackNatural 0
     boxPackStart mainBox connectButton PackNatural 0
     containerAdd window mainBox
 
-    return $ NetworkGUI portEntry usernameEntry serverEntry connectButton
+    return $ NetworkGUI portEntry usernameEntry serverEntry connectButton statusLabel
 
 connectButtonClicked :: Window -> Window -> NetworkGUI -> TChan String -> IO ()
 connectButtonClicked networkWindow window networkGUI outChan = do
-    chatGUI <- chatWindow window outChan
     portStr  <- entryGetText (portEntry networkGUI)
     hostname <- entryGetText (serverEntry networkGUI)
     userName <- entryGetText (usernameEntry networkGUI)
-    -- TODO: Right now this assumes successful connection to the network.
-    forkIO $ startTcpClient handleFunc (connectFunc outChan) (ChatState chatGUI userName) outChan hostname (read portStr)
-    widgetDestroy networkWindow
+    labelSetText (statusLabel networkGUI) "Connecting..."
+    void . forkIO $ startTcpClient (connectFunc networkWindow window networkGUI userName outChan)
+                                   (failedConnectionFunc networkGUI)
+                                   outChan
+                                   hostname
+                                   (read portStr)
+
+failedConnectionFunc :: NetworkGUI -> IO ()
+failedConnectionFunc networkGUI = labelSetText (statusLabel networkGUI) "Failed to connect."
+
+connectFunc :: Window -> Window -> NetworkGUI -> String -> TChan String -> IO (String -> ChatIO (), ChatState)
+connectFunc networkWindow window networkGUI userName outChan = do
+    sendNewUserMessage outChan userName
+    postGUIAsync $ labelSetText (statusLabel networkGUI) "Sending user info..."
+    return (handleFunc window networkWindow outChan, ChatState Nothing userName)
 
 main :: IO ()
 main = do
@@ -310,17 +328,22 @@ removeUser list username = do
         Just ndx -> listStoreRemove list ndx
         _ -> putStrLn $ "Could not find user: " ++ username
 
-connectFunc :: TChan String -> ChatIO ()
-connectFunc outChan = do
-    username <- use cUserName
-    liftIO $ sendNewUserMessage outChan username
-
-handleFunc :: String -> ChatIO ()
-handleFunc json = do
-    chatLogView <- chatLogView <$> use chatGUI
-    userList    <- userList    <$> use chatGUI
-    case decode $ pack json :: Maybe Message of
-        Just (ChatMessage info) -> liftIO . postGUIAsync $ appendText chatLogView (message info)
-        Just (UserListMessage info) -> liftIO . postGUIAsync $ replaceUsers userList (userNames info)
-        Just (DisconnectMessage info) -> liftIO . postGUIAsync $ removeUser userList (dUserName info)
-        _ -> return ()
+handleFunc :: Window -> Window -> TChan String -> String -> ChatIO ()
+handleFunc window networkWindow outChan json = do
+    may_chatGUI <- use chatGUI
+    case may_chatGUI of
+        Just chatGUI ->
+            case decode $ pack json :: Maybe Message of
+                Just (ChatMessage info) -> liftIO . postGUIAsync $ appendText (chatLogView chatGUI) (message info)
+                Just (UserListMessage info) -> liftIO . postGUIAsync $ replaceUsers (userList chatGUI) (userNames info)
+                Just (DisconnectMessage info) -> liftIO . postGUIAsync $ removeUser (userList chatGUI) (dUserName info)
+                _ -> return ()
+        _ ->
+            case decode $ pack json :: Maybe Message of
+                Just (UserListMessage info) -> do
+                    gui <- liftIO $ chatWindow window outChan
+                    chatGUI .= Just gui
+                    liftIO $ do
+                        widgetDestroy networkWindow
+                        postGUIAsync $ replaceUsers (userList gui) (userNames info)
+                _ -> return ()

@@ -16,16 +16,18 @@ import Control.Concurrent.STM
     , orElse
     , STM(..)
     )
-import Control.Exception (bracket)
+import Control.Exception (try, SomeException(..))
 import Network (connectTo, withSocketsDo, PortID(..))
 import System.IO (Handle, hClose, hGetLine, hFlush, hPutStrLn)
 
 -- | Starts the TCP Client connection.
-startTcpClient ::  -- | The handler callback for incoming messages.
-                  (String -> StateT a IO ())
+startTcpClient ::
                -- | The handler for a new connection.
-               -> StateT a IO ()
-               -> a  -- ^ The initial state of the handler and connect function.
+               -- Tuple contains the handler for incoming messages and the
+               -- initial state of the handler.
+                  IO (String -> StateT a IO (), a)
+               -- | The handler for a failed connection
+               -> IO ()
                -- | The out-bound channel that delivers messages from the user.
                -> TChan String
                -- | The host name.
@@ -33,27 +35,30 @@ startTcpClient ::  -- | The handler callback for incoming messages.
                -- | The port #.
                -> Int
                -> IO ()
-startTcpClient handleFunc connectFunc handleFuncState outChan hostname port =
+startTcpClient connectFunc failedConnectionFunc outChan hostname port =
     withSocketsDo $ do
         let portID = PortNumber . fromIntegral $ port
-        bracket (connectTo hostname portID)
-                hClose
-                (startListenCycle handleFunc connectFunc handleFuncState outChan)
+        either_handle <- try $ connectTo hostname portID
+        case either_handle of
+            Left (SomeException _) -> failedConnectionFunc
+            Right handle -> startListenCycle connectFunc
+                                             outChan
+                                             handle
 
 -- | Begins the cycle to listen for inbound messages.
-startListenCycle :: -- | The handler callback.
-                    (String -> StateT a IO ())
+startListenCycle ::
                  -- | The handler for a new connection.
-                 -> StateT a IO ()
-                 -> a  -- ^ Initial handler function state.
+                 -- Tuple contains the handler for incoming messages and the
+                 -- initial state of the handler.
+                    IO (String -> StateT a IO (), a)
                  -> TChan String  -- ^ Out-bound channel.
                  -> Handle  -- ^ Handle to the socket.
                  -> IO ()
-startListenCycle handleFunc connectFunc handleFuncState outChan socket = do
+startListenCycle connectFunc outChan socket = do
     inChan <- newTChanIO
-    state <- execStateT connectFunc handleFuncState
+    (handleFunc, handleFuncState) <- connectFunc
     forkIO $ listenLoop (hGetLine socket) inChan
-    mainLoop handleFunc state inChan outChan socket
+    mainLoop handleFunc handleFuncState inChan outChan socket
 
 -- | The main loop. Either delivers an outbound message or recieves an inbound
 -- message.
