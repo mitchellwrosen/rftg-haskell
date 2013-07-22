@@ -341,9 +341,9 @@ handleFunc window networkWindow outChan json = do
         _ ->
             case decode $ pack json :: Maybe Message of
                 Just (UserListMessage info) -> do
-                    gui <- liftIO $ chatWindow window outChan
+                    gui <- liftIO . postGUISync $ chatWindow window outChan
                     chatGUI .= Just gui
-                    liftIO $ do
+                    liftIO . postGUIAsync $ do
                         widgetDestroy networkWindow
-                        postGUIAsync $ replaceUsers (userList gui) (userNames info)
+                        replaceUsers (userList gui) (userNames info)
                 _ -> return ()

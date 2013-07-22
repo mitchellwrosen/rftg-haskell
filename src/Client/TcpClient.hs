@@ -38,6 +38,7 @@ startTcpClient ::
 startTcpClient connectFunc failedConnectionFunc outChan hostname port =
     withSocketsDo $ do
         let portID = PortNumber . fromIntegral $ port
+        -- TODO: Put a timeout around this connector
         either_handle <- try $ connectTo hostname portID
         case either_handle of
             Left (SomeException _) -> failedConnectionFunc
